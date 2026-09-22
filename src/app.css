@@ -110,3 +110,21 @@ body {
   font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--viz-text-primary);
 }
+
+/* Active-scope banner. States plainly that the whole page is filtered, so a
+   reader never mistakes a scoped total for the tenant total. */
+.page__scope {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: -6px 0 18px;
+  padding: 9px 14px;
+  background: var(--viz-seq-100);
+  border-radius: var(--viz-radius-ctl);
+  font: 400 12px/1.4 var(--viz-font);
+  color: var(--viz-seq-700);
+}
+.page__scope button {
+  font: 600 12px/1 var(--viz-font);
+  color: var(--viz-seq-700);
+  background: none; border: 0; cursor: pointer;
+  text-decoration: underline; padding: 2px;
+}

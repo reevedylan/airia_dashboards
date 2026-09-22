@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { full, percent } from '../../lib/format'
 
+export type SortDir = 'asc' | 'desc'
+
 export interface RankColumn {
   /** Matches a key in each row's `cells`. */
   key: string
@@ -8,6 +10,8 @@ export interface RankColumn {
   format?: (n: number) => string
   /** Recede a derived column so the measured ones lead. */
   muted?: boolean
+  /** Allow sorting by this column. */
+  sortable?: boolean
 }
 
 export interface RankRow {
@@ -35,6 +39,14 @@ export interface RankTableProps {
    */
   selectedKey?: string | null
   onSelect?: (key: string | null) => void
+  /**
+   * Adds a search box. Worth it once the row list is unbounded — a user list
+   * grows with the org, unlike a fixed set of models.
+   */
+  searchable?: boolean
+  searchPlaceholder?: string
+  /** Allow sorting by the value column and any column marked `sortable`. */
+  sortable?: boolean
   /** Extra columns, rendered in order after the value column. */
   columns?: readonly RankColumn[]
   /** Rows shown before the "Show all" control appears. */
@@ -56,29 +68,80 @@ export interface RankTableProps {
 export function RankTable({
   rows, labelHeading, valueHeading, columns = [], limit = 6,
   selectedKey = null, onSelect,
+  searchable = false, searchPlaceholder = 'Search…', sortable = false,
   formatValue = (n) => full(n),
   barColor = 'var(--viz-seq-200)',
 }: RankTableProps) {
   const [expanded, setExpanded] = useState(false)
+  const [query, setQuery] = useState('')
+  /** `null` column means the value column. */
+  const [sort, setSort] = useState<{ col: string | null; dir: SortDir }>({ col: null, dir: 'desc' })
 
-  const { shown, max, total } = useMemo(() => {
-    const sorted = [...rows].sort((a, b) => b.value - a.value)
+  const { shown, matched, max, total } = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const filtered = q === '' ? rows : rows.filter((r) => r.label.toLowerCase().includes(q))
+
+    const at = (r: RankRow) => (sort.col === null ? r.value : r.cells?.[sort.col])
+    const ordered = [...filtered].sort((a, b) => {
+      const av = at(a), bv = at(b)
+      // Rows with no value for the sorted column sink, whichever direction.
+      if (av == null && bv == null) return 0
+      if (av == null) return 1
+      if (bv == null) return -1
+      return sort.dir === 'desc' ? bv - av : av - bv
+    })
+
     return {
-      shown: expanded ? sorted : sorted.slice(0, limit),
-      max: Math.max(...sorted.map((r) => r.value), 1),
-      total: sorted.reduce((a, r) => a + r.value, 0),
+      shown: expanded ? ordered : ordered.slice(0, limit),
+      matched: ordered.length,
+      // The bar is a share of the largest value in the FULL set, so it does
+      // not rescale as you search.
+      max: Math.max(...rows.map((r) => r.value), 1),
+      total: rows.reduce((a, r) => a + r.value, 0),
     }
-  }, [rows, expanded, limit])
+  }, [rows, expanded, limit, query, sort])
+
+  const head = (key: string | null, heading: string, className?: string, reactKey?: string) => {
+    const on = sort.col === key
+    if (!sortable) return <th key={reactKey} scope="col" className={className}>{heading}</th>
+    return (
+      <th key={reactKey} scope="col" className={className} aria-sort={on ? (sort.dir === 'desc' ? 'descending' : 'ascending') : undefined}>
+        <button
+          type="button"
+          onClick={() => setSort((s) => (s.col === key ? { col: key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { col: key, dir: 'desc' }))}
+        >
+          {heading}
+          {on ? <span className="viz-rank__caret" aria-hidden="true">{sort.dir === 'desc' ? '▼' : '▲'}</span> : null}
+        </button>
+      </th>
+    )
+  }
 
   return (
     <div className="viz-rank" data-cols={columns.length || undefined}>
+      {searchable ? (
+        <div className="viz-rank__tools">
+          <input
+            className="viz-rank__search"
+            type="search"
+            value={query}
+            placeholder={searchPlaceholder}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <span className="viz-rank__count">
+            {matched === rows.length ? `${rows.length} total` : `${matched} of ${rows.length}`}
+          </span>
+        </div>
+      ) : null}
       <table>
         <thead>
           <tr>
             <th scope="col">{labelHeading}</th>
-            <th scope="col" className="viz-rank__num">{valueHeading}</th>
+            {head(null, valueHeading, 'viz-rank__num')}
             {columns.map((c) => (
-              <th key={c.key} scope="col" className="viz-rank__num">{c.heading}</th>
+              c.sortable
+                ? head(c.key, c.heading, 'viz-rank__num', c.key)
+                : <th key={c.key} scope="col" className="viz-rank__num">{c.heading}</th>
             ))}
           </tr>
         </thead>
@@ -135,10 +198,10 @@ export function RankTable({
         </tbody>
       </table>
 
-      {rows.length > limit ? (
+      {matched > limit ? (
         <button type="button" className="viz-showall" onClick={() => setExpanded((v) => !v)}>
           <ExpandIcon />
-          {expanded ? 'Show less' : `Show all ${rows.length}`}
+          {expanded ? `Show top ${limit}` : `Show all ${matched}`}
         </button>
       ) : null}
     </div>

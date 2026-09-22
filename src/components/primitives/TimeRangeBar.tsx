@@ -4,6 +4,9 @@ export type RangeKey = (typeof RANGES)[number]
 export interface TimeRangeBarProps {
   value: RangeKey
   onChange: (next: RangeKey) => void
+  /** Scope controls, beside the range tabs — they belong together because
+   *  both narrow the same data for everything below. */
+  filters?: React.ReactNode
   /** Rendered on the right — e.g. a theme toggle. */
   actions?: React.ReactNode
 }
@@ -12,7 +15,7 @@ export interface TimeRangeBarProps {
  * One range row, above everything it scopes. Every card below re-renders
  * against the same range, so the numbers always agree.
  */
-export function TimeRangeBar({ value, onChange, actions }: TimeRangeBarProps) {
+export function TimeRangeBar({ value, onChange, filters, actions }: TimeRangeBarProps) {
   return (
     <div className="viz-toolbar">
       <div className="viz-segmented" role="group" aria-label="Time range">
@@ -28,6 +31,7 @@ export function TimeRangeBar({ value, onChange, actions }: TimeRangeBarProps) {
           </button>
         ))}
       </div>
+      {filters}
       {actions ? <div className="viz-toolbar__actions">{actions}</div> : null}
     </div>
   )

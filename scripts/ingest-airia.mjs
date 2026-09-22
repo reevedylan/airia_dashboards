@@ -253,6 +253,10 @@ async function pool(tasks, size) {
 const warnings = new Set()
 const otherChargeKeys = new Set()
 
+/** Traffic with no user on the row. Kept as an explicit member rather than
+ *  dropped, so the Users breakdown always reconciles with the totals. */
+const UNATTRIBUTED = '(unattributed)'
+
 /**
  * Providers disagree about what `input` means, so normalise to three disjoint
  * buckets before anything is summed.
@@ -291,31 +295,34 @@ function splitCharges(additionalCharges) {
 
 /* ------------------------------------------------------------- aggregate -- */
 
-const emptyBucket = () => ({
-  tokIn: 0, tokCached: 0, tokOut: 0,
-  amtIn: 0n, amtCached: 0n, amtOut: 0n, amtWrite: 0n, amtOther: 0n,
-  executions: 0,
+const emptyFact = () => ({
+  tIn: 0, tCa: 0, tOu: 0,
+  cIn: 0n, cCa: 0n, cOu: 0n, cWr: 0n, cOt: 0n,
+  ex: 0,
 })
-const emptyModel = () => ({
-  inT: 0, caT: 0, ouT: 0,
-  inC: 0n, caC: 0n, ouC: 0n, wrC: 0n, otC: 0n,
-  executions: 0,
-})
-const MODEL_KEY_SEP = '\u0000'
 
+/**
+ * One sparse fact table per range, keyed by (bucket, user, model).
+ *
+ * Everything the dashboard shows is derived from this on the client: the KPI
+ * tiles, both charts, and the model and user breakdowns. That matters because
+ * the user filter is a real scope rather than a highlight — filtering by user
+ * has to recompute the model breakdown too, which a pre-aggregated per-model
+ * series could not do.
+ *
+ * It stays small because the combinations that actually occur are few: about a
+ * thousand facts across all five ranges, against 21k source rows.
+ */
 function aggregate(rows) {
-  // One bucket map and one model map per range.
   const ranges = Object.fromEntries(Object.entries(RANGE_SPECS).map(([key, spec]) => {
     const boundaries = buildBoundaries(spec.bucketMs, spec.count, now)
     return [key, {
       spec,
       boundaries,
       index: new Map(boundaries.map((b, i) => [b, i])),
-      buckets: new Map(boundaries.map((b) => [b, emptyBucket()])),
-      // Keyed by model + bucket index: isolating a model in the UI needs its
-      // own per-category bars, not just a range total.
-      modelBuckets: new Map(),
-      modelNames: new Set(),
+      facts: new Map(),
+      users: new Map(),
+      models: new Map(),
     }]
   }))
 
@@ -340,35 +347,41 @@ function aggregate(rows) {
     else mismatched++
 
     providers[row.providerType ?? '(unknown)'] = (providers[row.providerType ?? '(unknown)'] ?? 0) + 1
-    const name = row.modelName || '(unspecified)'
+
+    const model = row.modelName || '(unspecified)'
+    const user = (row.userEmail ?? '').trim() || UNATTRIBUTED
     let counted = false
 
     for (const r of Object.values(ranges)) {
       const bucketStart = localFloor(t, r.spec.bucketMs)
-      const b = r.buckets.get(bucketStart)
-      if (!b) continue                            // older than this range's window
+      const bi = r.index.get(bucketStart)
+      if (bi === undefined) continue               // older than this range's window
       counted = true
-      b.tokIn += tok.input; b.tokCached += tok.cached; b.tokOut += tok.output
-      b.amtIn += amtIn; b.amtCached += amtCached; b.amtOut += amtOut
-      b.amtWrite += write; b.amtOther += other
-      b.executions++
 
-      r.modelNames.add(name)
-      const mk = `${name}${MODEL_KEY_SEP}${r.index.get(bucketStart)}`
-      let m = r.modelBuckets.get(mk)
-      if (!m) { m = emptyModel(); r.modelBuckets.set(mk, m) }
-      m.inT += tok.input; m.caT += tok.cached; m.ouT += tok.output
-      m.inC += amtIn; m.caC += amtCached; m.ouC += amtOut
-      m.wrC += write; m.otC += other
-      m.executions++
+      if (!r.users.has(user)) r.users.set(user, r.users.size)
+      if (!r.models.has(model)) r.models.set(model, r.models.size)
+      const fk = `${bi}|${r.users.get(user)}|${r.models.get(model)}`
+
+      let f = r.facts.get(fk)
+      if (!f) { f = emptyFact(); r.facts.set(fk, f) }
+      f.tIn += tok.input; f.tCa += tok.cached; f.tOu += tok.output
+      f.cIn += amtIn; f.cCa += amtCached; f.cOu += amtOut
+      f.cWr += write; f.cOt += other
+      f.ex += 1
     }
     if (counted) placed++
   }
 
   const out = {}
   for (const [key, r] of Object.entries(ranges)) {
-    const at = (b) => r.buckets.get(b)
-    const col = (fn) => r.boundaries.map((b) => fn(at(b)))
+    const cols = { b: [], u: [], m: [], ex: [], tIn: [], tCa: [], tOu: [], cIn: [], cCa: [], cOu: [], cWr: [], cOt: [] }
+    for (const [fk, f] of r.facts) {
+      const [b, u, m] = fk.split('|').map(Number)
+      cols.b.push(b); cols.u.push(u); cols.m.push(m); cols.ex.push(f.ex)
+      cols.tIn.push(f.tIn); cols.tCa.push(f.tCa); cols.tOu.push(f.tOu)
+      cols.cIn.push(fromScaled(f.cIn)); cols.cCa.push(fromScaled(f.cCa)); cols.cOu.push(fromScaled(f.cOu))
+      cols.cWr.push(fromScaled(f.cWr)); cols.cOt.push(fromScaled(f.cOt))
+    }
     out[key] = {
       bucketMs: r.spec.bucketMs,
       bucketCount: r.spec.count,
@@ -376,50 +389,9 @@ function aggregate(rows) {
       // Emitted rather than derived: locally-aligned buckets are not a strict
       // arithmetic grid across a daylight-saving change.
       x: r.boundaries,
-      tokens: {
-        input: col((b) => b.tokIn),
-        cached: col((b) => b.tokCached),
-        output: col((b) => b.tokOut),
-      },
-      cost: {
-        input: col((b) => fromScaled(b.amtIn)),
-        cached: col((b) => fromScaled(b.amtCached)),
-        output: col((b) => fromScaled(b.amtOut)),
-        write: col((b) => fromScaled(b.amtWrite)),
-        // Non-token charges (web search requests, and whatever Airia adds
-        // next), kept separate so the stacked chart sums to the true total.
-        other: col((b) => fromScaled(b.amtOther)),
-      },
-      executions: col((b) => b.executions),
-      /**
-       * Per-model series, SPARSE: `h` holds the bucket indices where the model
-       * ran and every other array is parallel to it. Categories stay split so
-       * the UI can isolate one model and still stack it the same way, and so
-       * the rate card divides like with like.
-       *
-       * Sparse because most model/bucket pairs are empty — dense would be
-       * models x buckets x 9 arrays of mostly zeros.
-       */
-      models: [...r.modelNames]
-        .map((model) => {
-          const h = [], ex = []
-          const tIn = [], tCa = [], tOu = []
-          const cIn = [], cCa = [], cOu = [], cWr = [], cOt = []
-          for (let i = 0; i < r.spec.count; i++) {
-            const m = r.modelBuckets.get(`${model}${MODEL_KEY_SEP}${i}`)
-            if (!m) continue
-            h.push(i); ex.push(m.executions)
-            tIn.push(m.inT); tCa.push(m.caT); tOu.push(m.ouT)
-            cIn.push(fromScaled(m.inC)); cCa.push(fromScaled(m.caC)); cOu.push(fromScaled(m.ouC))
-            cWr.push(fromScaled(m.wrC)); cOt.push(fromScaled(m.otC))
-          }
-          return { model, h, ex, tIn, tCa, tOu, cIn, cCa, cOu, cWr, cOt }
-        })
-        .filter((m) => m.h.length > 0)
-        .sort((a, b) => {
-          const spend = (x) => x.cIn.concat(x.cCa, x.cOu, x.cWr, x.cOt).reduce((p, c) => p + c, 0)
-          return spend(b) - spend(a)
-        }),
+      users: [...r.users.keys()],
+      models: [...r.models.keys()],
+      facts: cols,
     }
   }
 
@@ -465,11 +437,15 @@ console.log(`  ${scoped.length.toLocaleString()} rows after source filter (${SOU
 
 const agg = aggregate(scoped)
 
-// Cache only the fields aggregation needs — deliberately dropping userEmail,
-// names and tenantId so even the gitignored cache holds no personal data.
+/*
+ * Local cache of the fields aggregation needs, so a re-aggregate does not
+ * refetch. It HOLDS USER EMAILS — they are a dimension of the dashboard now,
+ * so they cannot be projected away as they were before. Names, tenant and
+ * execution ids are still dropped. .cache/ is gitignored; keep it that way.
+ */
 mkdirSync(CACHE_DIR, { recursive: true })
 const KEEP = [
-  'executionDateTime', 'executionSourceType', 'providerType', 'modelName',
+  'executionDateTime', 'executionSourceType', 'providerType', 'modelName', 'userEmail',
   'inputTokenCountConsumed', 'cachedInputTokenCountConsumed', 'outputTokenCountConsumed',
   'totalTokenCountConsumed', 'inputTokenAmountConsumed', 'cachedInputTokenAmountConsumed',
   'outputTokenAmountConsumed', 'totalTokenAmountConsumed', 'balanceUsed', 'additionalCharges',
@@ -493,6 +469,7 @@ const out = {
     otherChargeKeys: [...otherChargeKeys],
     amountsReconciled: agg.stats.reconciled,
     amountsMismatched: agg.stats.mismatched,
+    unattributedLabel: UNATTRIBUTED,
     warnings: [...warnings],
   },
   ranges: agg.ranges,
@@ -504,19 +481,12 @@ writeFileSync(OUT, JSON.stringify(out))
 const sum = (a) => a.reduce((p, c) => p + c, 0)
 console.log(`\n  amounts reconciled: ${agg.stats.reconciled.toLocaleString()} / mismatched: ${agg.stats.mismatched}`)
 for (const [k, r] of Object.entries(agg.ranges)) {
-  const cost = sum(r.cost.input) + sum(r.cost.cached) + sum(r.cost.output) + sum(r.cost.write) + sum(r.cost.other)
-  const tok = sum(r.tokens.input) + sum(r.tokens.cached) + sum(r.tokens.output)
-  const live = r.executions.filter((n) => n > 0).length
+  const f = r.facts
+  const cost = sum(f.cIn) + sum(f.cCa) + sum(f.cOu) + sum(f.cWr) + sum(f.cOt)
+  const tok = sum(f.tIn) + sum(f.tCa) + sum(f.tOu)
   console.log(`  ${k.padEnd(4)} $${cost.toFixed(2).padStart(9)}  ${tok.toLocaleString().padStart(15)} tokens  ` +
-    `${String(live).padStart(3)}/${r.bucketCount} bars with activity  ${r.models.length} models`)
+    `${String(f.b.length).padStart(4)} facts  ${r.models.length} models  ${r.users.length} users`)
 }
 if (otherChargeKeys.size) console.log(`\n  other charge keys: ${[...otherChargeKeys].join(', ')}`)
 if (warnings.size) { console.log('\n  warnings:'); for (const w of warnings) console.log(`    - ${w}`) }
 console.log(`\n  wrote ${OUT.replace(ROOT + '/', '')} in ${((Date.now() - started) / 1000).toFixed(1)}s`)
-if (flag('verbose')) {
-  for (const [k, r] of Object.entries(agg.ranges)) {
-    console.log(`\n${k} first/last bar (${ZONE}):`)
-    const f = new Intl.DateTimeFormat('en-AU', { timeZone: ZONE, dateStyle: 'medium', timeStyle: 'short' })
-    console.log('  ', f.format(new Date(r.x[0])), '->', f.format(new Date(r.x[r.x.length - 1])))
-  }
-}

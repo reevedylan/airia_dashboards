@@ -15,7 +15,7 @@
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
 }
-.viz-toolbar__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.viz-toolbar__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
 
 .viz-segmented {
   display: inline-flex; align-items: stretch;
@@ -386,3 +386,99 @@
 /* Line-chart ghost: the unfiltered whole behind an isolated series. */
 .viz-ghost-area { fill: var(--viz-other); opacity: 0.16; }
 .viz-ghost-line { stroke: var(--viz-other); stroke-width: 1.5; opacity: 0.55; }
+
+/* --- multi-select with search ------------------------------------------- */
+
+.viz-msel { position: relative; }
+.viz-msel__trigger { gap: 8px; }
+.viz-msel__label { color: var(--viz-text-muted); }
+.viz-msel__summary {
+  color: var(--viz-text-primary); font-weight: 600;
+  max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.viz-msel__trigger[data-active] {
+  border-color: var(--viz-focus);
+  background: var(--viz-seq-100);
+}
+.viz-msel__trigger[data-active] :where(.viz-msel__label, .viz-msel__summary) { color: var(--viz-seq-700); }
+
+.viz-msel__pop {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
+  width: 290px;
+  display: flex; flex-direction: column;
+  background: var(--viz-surface-raised);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
+  overflow: hidden;
+}
+.viz-msel__search {
+  font: 400 13px/1 var(--viz-font);
+  color: var(--viz-text-primary);
+  background: none; border: 0;
+  border-bottom: 1px solid var(--viz-border);
+  padding: 11px 13px;
+  outline: none;
+}
+.viz-msel__search::placeholder { color: var(--viz-text-muted); }
+
+.viz-msel__list { max-height: 244px; overflow-y: auto; padding: 5px; }
+.viz-msel__opt {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  font: 400 12.5px/1.3 var(--viz-font);
+  color: var(--viz-text-primary);
+  background: none; border: 0; cursor: pointer;
+  padding: 7px 8px; border-radius: 6px; text-align: left;
+}
+.viz-msel__opt:hover { background: var(--viz-surface-hover); }
+.viz-msel__opt[aria-selected='true'] { background: var(--viz-surface-active); font-weight: 600; }
+.viz-msel__opt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viz-msel__check {
+  width: 14px; height: 14px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--viz-axis); border-radius: 3px;
+  color: var(--viz-surface);
+}
+.viz-msel__opt[aria-selected='true'] .viz-msel__check {
+  background: var(--viz-focus); border-color: var(--viz-focus);
+}
+.viz-msel__empty { margin: 0; padding: 14px 10px; font: 400 12.5px/1 var(--viz-font); color: var(--viz-text-muted); }
+
+.viz-msel__foot {
+  display: flex; gap: 4px; padding: 6px;
+  border-top: 1px solid var(--viz-border);
+}
+.viz-msel__action {
+  flex: 1;
+  font: 500 11.5px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: none; border: 0; cursor: pointer;
+  padding: 7px 6px; border-radius: 6px;
+}
+.viz-msel__action:hover:not(:disabled) { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+.viz-msel__action:disabled { opacity: 0.4; cursor: default; }
+
+/* --- rank-table search & sorting ---------------------------------------- */
+
+.viz-rank__tools {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.viz-rank__search {
+  flex: 1; min-width: 0; max-width: 260px;
+  font: 400 12.5px/1 var(--viz-font);
+  color: var(--viz-text-primary);
+  background: var(--viz-surface-sunken);
+  border: 1px solid transparent; border-radius: 6px;
+  padding: 8px 10px; outline: none;
+}
+.viz-rank__search:focus { border-color: var(--viz-focus); }
+.viz-rank__search::placeholder { color: var(--viz-text-muted); }
+.viz-rank__count { font: 400 11.5px/1 var(--viz-font); color: var(--viz-text-muted); }
+
+.viz-rank thead th button {
+  font: inherit; color: inherit; background: none; border: 0;
+  padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+}
+.viz-rank thead th button:hover { color: var(--viz-text-primary); }
+.viz-rank thead th[aria-sort] button { color: var(--viz-text-primary); font-weight: 600; }
+.viz-rank__caret { font-size: 9px; line-height: 1; }

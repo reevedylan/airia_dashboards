@@ -1,19 +1,21 @@
 import { useMemo, useState } from 'react'
 import {
   Card, AxisExtent, LineChart, BarChart, RankTable, StatTile,
-  TimeRangeBar, ToolbarButton,
+  TimeRangeBar, ToolbarButton, MultiSelect, Tabs,
   type RangeKey,
 } from './components'
 import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
-import { useAiria, summarise, runningTotal, modelRows, breakdownFor } from './data/airia'
+import {
+  useAiria, useAllUsers, seriesFor, breakdown, runningTotal,
+  type Dimension, type BreakdownRow,
+} from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
 /**
  * Colours are assigned to measures by identity, once — never by rank or array
- * position — so changing the range or filtering a series never repaints the
- * survivors.
+ * position — so changing the range or filtering never repaints the survivors.
  *
  * The stack orders below were validated with `scripts/validate-palette.mjs`:
  * the default palette seats yellow next to orange, which is the one adjacent
@@ -30,51 +32,93 @@ const C = {
   total: series(1),
 } as const
 
+/** One isolation at a time across both breakdowns, so the charts never try to
+ *  render two ghost overlays at once. */
+type Isolate = { dim: Dimension; key: string } | null
+
+const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users' }
+
 export default function App() {
   const [range, setRange] = useState<RangeKey>('3M')
-  const [hovered, setHovered] = useState<string | null>(null)
   const [tokenView, setTokenView] = useState<ChartView>('daily')
   const [spendView, setSpendView] = useState<ChartView>('daily')
-  /** One model isolated across BOTH charts — the Models table is the single
-   *  filter source, so isolating never applies to one chart alone. */
-  const [isolated, setIsolated] = useState<string | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
+  /** Empty means every user — a filter that excludes nothing, not everything. */
+  const [userFilter, setUserFilter] = useState<Set<string>>(new Set())
+  const [isolate, setIsolate] = useState<Isolate>(null)
+  const [tab, setTab] = useState<Dimension>('model')
   const [theme, setTheme] = useTheme()
+
   const load = useAiria()
+  const data = load.status === 'ready' ? load.data : null
+  const allUsers = useAllUsers(data)
+  const block = data ? data.ranges[range] : null
 
-  /* The ingest already bucketed each range to its own bar size and count, so
-     selecting a range is a lookup rather than a slice-and-downsample. */
-  const block = load.status === 'ready' ? load.data.ranges[range] : null
-  const slice = useMemo(() => (block ? summarise(block) : null), [block])
-  const models = useMemo(() => (block ? modelRows(block) : []), [block])
-
-  /* A model with traffic in 3M may have none in 24H, so an isolation that no
-     longer matches anything is dropped rather than showing an empty chart. */
-  const active = isolated && models.some((m) => m.model === isolated) ? isolated : null
-  const isolatedRow = active ? models.find((m) => m.model === active) ?? null : null
-  const breakdown = useMemo(
-    () => (block && active ? breakdownFor(block, active) : null),
-    [block, active],
+  /* The user filter is a SCOPE: everything below derives from `scoped`, so the
+     KPI tiles, both charts and both breakdowns all recompute together. */
+  const scoped = useMemo(
+    () => (block ? seriesFor(block, { users: userFilter }) : null),
+    [block, userFilter],
+  )
+  const modelRows = useMemo(
+    () => (block ? breakdown(block, 'model', userFilter) : []),
+    [block, userFilter],
+  )
+  const userRows = useMemo(
+    () => (block ? breakdown(block, 'user', userFilter) : []),
+    [block, userFilter],
   )
 
-  /* Labels come from the bucket size and the zone the buckets were aligned
-     to, not from the chart's total span. */
-  const fmtX = useMemo(
-    () => (block ? bucketFormat(block.bucketMs, block.zone) : null),
-    [block],
-  )
+  /* An isolation that no longer matches anything in scope is dropped rather
+     than left to render an empty chart — a model or user present in 3M may
+     have nothing in 24H, and a user filter can exclude one outright. */
+  const rowsFor = (dim: Dimension) => (dim === 'model' ? modelRows : userRows)
+  const activeRow: BreakdownRow | null =
+    isolate ? rowsFor(isolate.dim).find((r) => r.key === isolate.key) ?? null : null
+  const active = activeRow ? isolate : null
 
-  /** Each bucket's end is its neighbour's start, so a daylight-saving day's
-   *  23- or 25-hour bucket is labelled with its real span. */
+  /* Isolation stacks on top of the user scope, so the grey ghost is the
+     filtered whole, never the unfiltered dashboard total. */
+  const shown = useMemo(() => {
+    if (!block) return null
+    if (!active) return scoped
+    return seriesFor(block, {
+      users: userFilter,
+      model: active.dim === 'model' ? active.key : undefined,
+      user: active.dim === 'user' ? active.key : undefined,
+    })
+  }, [block, scoped, active, userFilter])
+
+  const fmtX = useMemo(() => (block ? bucketFormat(block.bucketMs, block.zone) : null), [block])
   const labelAt = useMemo(() => {
     if (!block || !fmtX) return () => ''
     const next = new Map(block.x.map((t, i) => [t, block.x[i + 1] ?? t + block.bucketMs]))
     return (t: number) => fmtX.label(t, next.get(t) ?? t + block.bucketMs)
   }, [block, fmtX])
 
+  const unattributed = data?.meta.unattributedLabel ?? '(unattributed)'
+
   const toolbar = (
     <TimeRangeBar
       value={range}
       onChange={setRange}
+      filters={
+        <MultiSelect
+          label="User"
+          options={allUsers}
+          selected={userFilter}
+          onToggle={(v) => setUserFilter((prev) => {
+            const next = new Set(prev)
+            if (next.has(v)) next.delete(v)
+            else next.add(v)
+            return next
+          })}
+          onChange={setUserFilter}
+          allLabel="All users"
+          placeholder="Search users…"
+          renderOption={(v) => (v === unattributed ? <em>{v}</em> : v)}
+        />
+      }
       actions={
         <ToolbarButton icon={<ThemeIcon />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? 'Light' : 'Dark'}
@@ -83,7 +127,7 @@ export default function App() {
     />
   )
 
-  if (load.status !== 'ready' || !slice || !block || !fmtX) {
+  if (!block || !scoped || !shown || !fmtX) {
     return (
       <div className="page">
         <Head />
@@ -93,86 +137,75 @@ export default function App() {
     )
   }
 
-  const { x, executions } = block
-  /* While isolated, the charts stack that model's own categories and the
-     unfiltered whole sits behind as a ghost. */
-  const tokens = breakdown ? breakdown.tokens : block.tokens
-  const cost = breakdown ? breakdown.cost : block.cost
-  const { totals } = slice
+  const { x } = block
+  const tokens = shown.tokens
+  const cost = shown.cost
   const from = fmtX.tick(x[0])
   const to = fmtX.tick(x[x.length - 1])
   const rowStamp = (i: number) => labelAt(x[i])
 
-  /* Table twins are sampled to a readable length. Sampling every Nth bucket
-     would be near-useless here: only ~9% of five-minute buckets contain any
-     execution, so a flat stride lands almost entirely on empty ones and the
-     table reads as a column of zeros. Sample the ACTIVE buckets instead, so
-     the twin actually carries the values the chart is showing. */
-  /* Cumulative views accumulate from zero at the start of the SELECTED window,
-     so they reset on every range change rather than running all-time. */
-  /* Per-bucket totals of WHAT IS PLOTTED — the isolated model when one is
-     selected, every model otherwise. Deriving the cumulative series from the
-     all-models summary instead meant clicking a model changed the daily bars
-     but left the cumulative line untouched. */
-  const shownTokens = x.map((_, i) => tokens.input[i] + tokens.cached[i] + tokens.output[i])
-  const shownPaid = x.map((_, i) =>
-    cost.input[i] + cost.cached[i] + cost.output[i] + cost.write[i] + cost.other[i])
-  const tokenCumulative = runningTotal(shownTokens)
-  const spendCumulative = runningTotal(shownPaid)
+  const tokenCumulative = runningTotal(shown.tokenTotals)
+  const spendCumulative = runningTotal(scoped === shown ? shown.paid : shown.paid)
 
-  /* The unfiltered whole, for the grey reference behind an isolated series.
-     Daily compares per-bucket totals; cumulative compares running totals. */
-  const allTokens = block.x.map((_, i) =>
-    block.tokens.input[i] + block.tokens.cached[i] + block.tokens.output[i])
-  const allPaid = block.x.map((_, i) =>
-    block.cost.input[i] + block.cost.cached[i] + block.cost.output[i] +
-    block.cost.write[i] + block.cost.other[i])
-
+  /* The ghost is the current scope's whole — shown only while isolated. */
   const ghostOf = (values: number[], cumulative: boolean) =>
-    breakdown
+    active
       ? {
-          label: 'all models',
+          label: `all ${DIM_LABEL[active.dim]}`,
           values: cumulative ? runningTotal(values) : values,
           // A running total must not be re-summed when buckets merge.
           reducer: (cumulative ? 'max' : 'sum') as 'max' | 'sum',
         }
       : undefined
 
-  /* The card's headline figure follows the chart. Showing the window total
-     while the plot shows one model would misstate it by the isolated model's
-     share; the KPI strip above keeps the all-models totals. */
-  const tokenHeadline = breakdown ? shownTokens.reduce((p, c) => p + c, 0) : totals.tokens
-  const spendHeadline = breakdown ? shownPaid.reduce((p, c) => p + c, 0) : totals.cost
-
   const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
   const cumNote = `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`
-  const isolationNote = isolatedRow
-    ? `${isolatedRow.model} — ${share(isolatedRow.shareTokens)} of tokens, ` +
-      `${share(isolatedRow.shareSpend)} of spend · grey is all models`
+  const isolationNote = activeRow
+    ? `${activeRow.key} — ${share(activeRow.shareTokens)} of tokens, ` +
+      `${share(activeRow.shareSpend)} of spend · grey is all ${DIM_LABEL[isolate!.dim]}`
     : null
 
-  const activeBuckets = x.map((_, i) => i).filter((i) => executions[i] > 0)
+  /* Table twins sample the buckets that contain activity: only a fraction of
+     buckets are busy, so a flat stride would return a column of zeros. */
+  const activeBuckets = x.map((_, i) => i).filter((i) => shown.executions[i] > 0)
   const tableStride = Math.max(1, Math.floor(activeBuckets.length / 120))
   const rows = <T,>(fmt: (i: number) => T) =>
     activeBuckets.filter((_, n) => n % tableStride === 0).map(fmt)
 
+  const breakdownRows = rowsFor(tab)
+  const shareColumns = [
+    { key: 'shareSpend', heading: '% spend', format: (n: number) => share(n), muted: true, sortable: true },
+    { key: 'tokensIn', heading: 'Tokens in', format: compact, sortable: true },
+    { key: 'tokensOut', heading: 'Tokens out', format: compact, sortable: true },
+    { key: 'shareTokens', heading: '% tokens', format: (n: number) => share(n), muted: true, sortable: true },
+    { key: 'inputRate', heading: 'in $/M', format: (n: number) => `$${n.toFixed(2)}`, sortable: true },
+    { key: 'outputRate', heading: 'out $/M', format: (n: number) => `$${n.toFixed(2)}`, sortable: true },
+  ]
 
   return (
     <div className="page">
       <Head />
       {toolbar}
 
+      {userFilter.size > 0 ? (
+        <p className="page__scope">
+          Scoped to {userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`} ·
+          {' '}everything below is recomputed against {userFilter.size === 1 ? 'their' : 'their combined'} data.
+          <button type="button" onClick={() => setUserFilter(new Set())}>Clear</button>
+        </p>
+      ) : null}
+
       <div className="strip">
-        <StatTile label="Token spend" value={currency(totals.cost)} />
-        <StatTile label="Tokens" value={compact(totals.tokens)} />
-        <StatTile label="Executions" value={full(totals.executions)} />
+        <StatTile label="Token spend" value={currency(scoped.totals.cost)} />
+        <StatTile label="Tokens" value={compact(scoped.totals.tokens)} />
+        <StatTile label="Executions" value={full(scoped.totals.executions)} />
       </div>
 
       <div className="grid">
         <Card
           className="grid__wide"
           title="Tokens"
-          value={compact(tokenHeadline)}
+          value={compact(shown.totals.tokens)}
           controls={<ViewToggle value={tokenView} onChange={setTokenView} />}
           legend={tokenView === 'daily'
             ? [
@@ -207,12 +240,12 @@ export default function App() {
                 columns: [
                   { key: 't', label: 'Time' },
                   { key: 'c', label: 'Cumulative tokens', align: 'right' },
-                  ...(breakdown ? [{ key: 'a', label: 'All models', align: 'right' as const }] : []),
+                  ...(active ? [{ key: 'a', label: `All ${DIM_LABEL[active.dim]}`, align: 'right' as const }] : []),
                 ],
                 rows: rows((i) => ({
                   t: rowStamp(i),
                   c: full(tokenCumulative[i]),
-                  ...(breakdown ? { a: full(runningTotal(allTokens)[i]) } : {}),
+                  ...(active ? { a: full(runningTotal(scoped.tokenTotals)[i]) } : {}),
                 })),
               }}
         >
@@ -230,7 +263,7 @@ export default function App() {
                 { key: 'input', label: 'input', color: C.input, values: tokens.input },
                 { key: 'output', label: 'output', color: C.output, values: tokens.output },
               ]}
-              ghost={ghostOf(allTokens, false)}
+              ghost={ghostOf(scoped.tokenTotals, false)}
             />
           ) : (
             <LineChart
@@ -246,7 +279,7 @@ export default function App() {
                 // largest value in a bucket is its closing value.
                 { key: 'total', label: 'cumulative', color: C.total, values: tokenCumulative, reducer: 'max', area: true },
               ]}
-              ghost={ghostOf(allTokens, true)}
+              ghost={ghostOf(scoped.tokenTotals, true)}
             />
           )}
         </Card>
@@ -254,7 +287,7 @@ export default function App() {
         <Card
           className="grid__wide"
           title="Token spend"
-          value={currency(spendHeadline)}
+          value={currency(shown.totals.cost)}
           controls={<ViewToggle value={spendView} onChange={setSpendView} />}
           legend={spendView === 'daily'
             ? [
@@ -296,12 +329,12 @@ export default function App() {
                 columns: [
                   { key: 't', label: 'Time' },
                   { key: 'c', label: 'Cumulative spend', align: 'right' },
-                  ...(breakdown ? [{ key: 'a', label: 'All models', align: 'right' as const }] : []),
+                  ...(active ? [{ key: 'a', label: `All ${DIM_LABEL[active.dim]}`, align: 'right' as const }] : []),
                 ],
                 rows: rows((i) => ({
                   t: rowStamp(i),
                   c: currency(spendCumulative[i]),
-                  ...(breakdown ? { a: currency(runningTotal(allPaid)[i]) } : {}),
+                  ...(active ? { a: currency(runningTotal(scoped.paid)[i]) } : {}),
                 })),
               }}
         >
@@ -321,7 +354,7 @@ export default function App() {
                 { key: 'input', label: 'input', color: C.input, values: cost.input },
                 { key: 'other', label: 'other', color: C.other, values: cost.other },
               ]}
-              ghost={ghostOf(allPaid, false)}
+              ghost={ghostOf(scoped.paid, false)}
             />
           ) : (
             <LineChart
@@ -334,25 +367,35 @@ export default function App() {
               series={[
                 { key: 'total', label: 'cumulative', color: C.total, values: spendCumulative, reducer: 'max', area: true },
               ]}
-              ghost={ghostOf(allPaid, true)}
+              ghost={ghostOf(scoped.paid, true)}
             />
           )}
         </Card>
 
-
+        {/* One card, two dimensions. They share a column set and the same
+            isolate/ghost behaviour — only the grouping differs. */}
         <Card
           className="grid__full"
-          title="Models"
+          title="Breakdown"
+          hideTitle
           controls={
-            active ? (
-              <ToolbarButton size="sm" icon={<ClearIcon />} onClick={() => setIsolated(null)}>
-                Show all models
-              </ToolbarButton>
-            ) : undefined
+            <>
+              <Tabs
+                ariaLabel="Breakdown dimension"
+                value={tab}
+                onChange={setTab}
+                tabs={[{ key: 'model', label: 'By model' }, { key: 'user', label: 'By user' }]}
+              />
+              {active ? (
+                <ToolbarButton size="sm" icon={<ClearIcon />} onClick={() => setIsolate(null)}>
+                  Show all {DIM_LABEL[active.dim]}
+                </ToolbarButton>
+              ) : null}
+            </>
           }
           table={{
             columns: [
-              { key: 'm', label: 'Model' },
+              { key: 'k', label: tab === 'model' ? 'Model' : 'User' },
               { key: 'c', label: 'Spend', align: 'right' },
               { key: 'cs', label: '% spend', align: 'right' },
               { key: 'ti', label: 'Tokens in', align: 'right' },
@@ -362,63 +405,67 @@ export default function App() {
               { key: 'o', label: 'Output $/M', align: 'right' },
               { key: 'n', label: 'Executions', align: 'right' },
             ],
-            rows: models.map((m) => ({
-              m: m.model,
-              c: currency(m.spend),
-              cs: share(m.shareSpend),
-              ti: full(m.tokensIn),
-              to: full(m.tokensOut),
-              ts: share(m.shareTokens),
-              i: m.inputRate == null ? '—' : currency(m.inputRate, 2),
-              o: m.outputRate == null ? '—' : currency(m.outputRate, 2),
-              n: full(m.executions),
+            rows: breakdownRows.map((r) => ({
+              k: r.key,
+              c: currency(r.spend),
+              cs: share(r.shareSpend),
+              ti: full(r.tokensIn),
+              to: full(r.tokensOut),
+              ts: share(r.shareTokens),
+              i: r.inputRate == null ? '—' : currency(r.inputRate, 2),
+              o: r.outputRate == null ? '—' : currency(r.outputRate, 2),
+              n: full(r.executions),
             })),
           }}
           footer={
             <p className="card-note">
               {active
-                ? 'Both charts are showing this model only. Click the row again, or "Show all models", to return to the combined view.'
-                : 'Click a model to show it on its own in both charts, with the all-models total behind it.'}
+                ? `Both charts are showing this ${active.dim} only. Click the row again, or "Show all ${DIM_LABEL[active.dim]}", to return to the combined view.`
+                : `Click a ${tab} to show it on its own in both charts, with the all-${DIM_LABEL[tab]} total behind it.`}
+              {tab === 'user' ? ` Traffic with no user on the record is grouped as ${unattributed}.` : ''}
+              {tab === 'user' && userFilter.size > 0
+                ? ' This list is scoped by the User filter too — use the filter above to change the selection.'
+                : ''}
             </p>
           }
         >
+          {/* Keyed by dimension so switching tabs resets sort, search and
+              expansion: a sort by "out $/M" on models is not a sort anyone
+              asked for on users, and it silently overrode the default. */}
           <RankTable
-            rows={models.map((m) => ({
-              key: m.model,
-              label: m.model,
-              value: m.spend,
+            key={tab}
+            rows={breakdownRows.map((r) => ({
+              key: r.key,
+              label: r.key,
+              value: r.spend,
               cells: {
-                shareSpend: m.shareSpend,
-                tokensIn: m.tokensIn,
-                tokensOut: m.tokensOut,
-                shareTokens: m.shareTokens,
-                inputRate: m.inputRate,
-                outputRate: m.outputRate,
+                shareSpend: r.shareSpend,
+                tokensIn: r.tokensIn,
+                tokensOut: r.tokensOut,
+                shareTokens: r.shareTokens,
+                inputRate: r.inputRate,
+                outputRate: r.outputRate,
               },
             }))}
-            labelHeading="Model"
+            labelHeading={tab === 'model' ? 'Model' : 'User'}
             valueHeading="Spend"
-            selectedKey={active}
-            onSelect={setIsolated}
-            columns={[
-              { key: 'shareSpend', heading: '% spend', format: (n) => share(n), muted: true },
-              { key: 'tokensIn', heading: 'Tokens in', format: compact },
-              { key: 'tokensOut', heading: 'Tokens out', format: compact },
-              { key: 'shareTokens', heading: '% tokens', format: (n) => share(n), muted: true },
-              { key: 'inputRate', heading: 'in $/M', format: (n) => `$${n.toFixed(2)}` },
-              { key: 'outputRate', heading: 'out $/M', format: (n) => `$${n.toFixed(2)}` },
-            ]}
+            columns={shareColumns}
             limit={6}
+            sortable
+            searchable
+            searchPlaceholder={tab === 'model' ? 'Search models…' : 'Search users…'}
+            selectedKey={active?.dim === tab ? active.key : null}
+            onSelect={(key) => setIsolate(key == null ? null : { dim: tab, key })}
             formatValue={(n) => currency(n)}
           />
         </Card>
       </div>
 
       <p className="page__note">
-        {load.data.meta.source} executions only · {full(load.data.meta.rowCount)} rows
-        ingested, {full(load.data.meta.amountsReconciled)} of which reconcile exactly
-        {load.data.meta.amountsMismatched > 0 ? ` (${load.data.meta.amountsMismatched} do not)` : ''} ·
-        {' '}generated {new Date(load.data.meta.generatedAt).toLocaleString('en-GB')}
+        {data!.meta.source} executions only · {full(data!.meta.rowCount)} rows
+        ingested, {full(data!.meta.amountsReconciled)} of which reconcile exactly
+        {data!.meta.amountsMismatched > 0 ? ` (${data!.meta.amountsMismatched} do not)` : ''} ·
+        {' '}generated {new Date(data!.meta.generatedAt).toLocaleString('en-GB')}
       </p>
 
       <PaletteSheet />
@@ -461,7 +508,7 @@ function EmptyState({ state }: { state: { status: string; message?: string } }) 
       <div className="empty">
         <strong>No ingested data yet.</strong>
         <p>The aggregates are gitignored, so a fresh clone starts empty. Generate them with:</p>
-        <pre>AIRIA_API_KEY=akey_… node scripts/ingest-airia.mjs --days 90</pre>
+        <pre>AIRIA_API_KEY=akey_… node scripts/ingest-airia.mjs</pre>
       </div>
     )
   }

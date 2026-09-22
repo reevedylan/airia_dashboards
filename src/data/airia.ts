@@ -1,14 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { RangeKey } from '../components'
 
 /**
  * Loads the aggregates produced by `scripts/ingest-airia.mjs`.
  *
- * Fetched at runtime rather than imported, so the buckets stay out of the JS
- * bundle and get cached as a static asset.
+ * Each range ships one sparse fact table keyed by (bucket, user, model), and
+ * everything on the page is folded out of it here: the KPI tiles, both charts,
+ * and the model and user breakdowns.
  *
- * The ingest emits one block per range, already bucketed to that range's bar
- * size and count, so there is no slicing or downsampling to do here.
+ * It has to work this way because the user filter is a real scope rather than
+ * a highlight — filtering by user must recompute the model breakdown too,
+ * which a pre-aggregated per-model series could not do. The tables stay small
+ * (about a thousand facts across all five ranges) so folding on every render
+ * is cheaper than shipping the pre-aggregations would be.
  */
 
 export interface AiriaMeta {
@@ -26,36 +30,20 @@ export interface AiriaMeta {
   otherChargeKeys: string[]
   amountsReconciled: number
   amountsMismatched: number
+  /** Label used for traffic with no user on the row. */
+  unattributedLabel: string
   warnings: string[]
 }
 
-/**
- * One model's per-bucket series, SPARSE: `h` holds the bucket indices where
- * the model ran and every other array is parallel to it.
- */
-export interface ModelSeries {
-  model: string
-  h: number[]
+/** Column-oriented facts. Every array is the same length; index i is one
+ *  (bucket, user, model) combination that actually occurred. */
+export interface Facts {
+  b: number[]
+  u: number[]
+  m: number[]
   ex: number[]
   tIn: number[]; tCa: number[]; tOu: number[]
   cIn: number[]; cCa: number[]; cOu: number[]; cWr: number[]; cOt: number[]
-}
-
-export interface ModelRow {
-  model: string
-  spend: number
-  /** Input + cached input. Both are prompt-side tokens the caller sent. */
-  tokensIn: number
-  tokensOut: number
-  tokens: number
-  executions: number
-  /** The model's actual unit price, derived from its own cost/count per
-   *  category. Stable per model, and the honest basis for comparing two. */
-  inputRate: number | null
-  outputRate: number | null
-  /** Share of the window's totals, 0–1. */
-  shareTokens: number | null
-  shareSpend: number | null
 }
 
 export interface RangeBlock {
@@ -66,10 +54,10 @@ export interface RangeBlock {
   /** Bucket start timestamps. Shipped rather than derived: locally-aligned
    *  buckets are not a strict arithmetic grid across a DST change. */
   x: number[]
-  tokens: { input: number[]; cached: number[]; output: number[] }
-  cost: { input: number[]; cached: number[]; output: number[]; write: number[]; other: number[] }
-  executions: number[]
-  models: ModelSeries[]
+  /** Dimension dictionaries; `facts.u` and `facts.m` index into these. */
+  users: string[]
+  models: string[]
+  facts: Facts
 }
 
 export interface AiriaData {
@@ -104,7 +92,166 @@ export function useAiria(url = 'data/airia-gateway.json'): LoadState {
   return state
 }
 
-const sum = (a: readonly number[]) => a.reduce((p, c) => p + c, 0)
+/* ------------------------------------------------------------- folding -- */
+
+export interface Series {
+  tokens: { input: number[]; cached: number[]; output: number[] }
+  cost: { input: number[]; cached: number[]; output: number[]; write: number[]; other: number[] }
+  executions: number[]
+  /** Per-bucket sums of the above, for the cumulative views and the ghost. */
+  tokenTotals: number[]
+  paid: number[]
+  totals: {
+    tokens: number
+    tokensInput: number
+    tokensCached: number
+    tokensOutput: number
+    cost: number
+    executions: number
+  }
+}
+
+const zeros = (n: number) => new Array<number>(n).fill(0)
+
+/** Which facts to include. Any field left out is not constrained. */
+export interface FactFilter {
+  /** Selected user labels. Undefined or empty means every user. */
+  users?: ReadonlySet<string>
+  model?: string | null
+  user?: string | null
+}
+
+function predicate(block: RangeBlock, f: FactFilter): (i: number) => boolean {
+  const { users, model, user } = f
+  const scopeAll = !users || users.size === 0
+  // Resolve labels to dictionary indices once, rather than per fact.
+  const allowed = scopeAll ? null : new Set(
+    block.users.map((u, i) => (users!.has(u) ? i : -1)).filter((i) => i >= 0),
+  )
+  const mi = model == null ? -1 : block.models.indexOf(model)
+  const ui = user == null ? -1 : block.users.indexOf(user)
+  const facts = block.facts
+  return (i) => {
+    if (allowed && !allowed.has(facts.u[i])) return false
+    if (model != null && facts.m[i] !== mi) return false
+    if (user != null && facts.u[i] !== ui) return false
+    return true
+  }
+}
+
+export function seriesFor(block: RangeBlock, filter: FactFilter = {}): Series {
+  const n = block.bucketCount
+  const f = block.facts
+  const keep = predicate(block, filter)
+
+  const out: Series = {
+    tokens: { input: zeros(n), cached: zeros(n), output: zeros(n) },
+    cost: { input: zeros(n), cached: zeros(n), output: zeros(n), write: zeros(n), other: zeros(n) },
+    executions: zeros(n),
+    tokenTotals: zeros(n),
+    paid: zeros(n),
+    totals: { tokens: 0, tokensInput: 0, tokensCached: 0, tokensOutput: 0, cost: 0, executions: 0 },
+  }
+
+  for (let i = 0; i < f.b.length; i++) {
+    if (!keep(i)) continue
+    const b = f.b[i]
+    out.tokens.input[b] += f.tIn[i]
+    out.tokens.cached[b] += f.tCa[i]
+    out.tokens.output[b] += f.tOu[i]
+    out.cost.input[b] += f.cIn[i]
+    out.cost.cached[b] += f.cCa[i]
+    out.cost.output[b] += f.cOu[i]
+    out.cost.write[b] += f.cWr[i]
+    out.cost.other[b] += f.cOt[i]
+    out.executions[b] += f.ex[i]
+  }
+
+  for (let b = 0; b < n; b++) {
+    out.tokenTotals[b] = out.tokens.input[b] + out.tokens.cached[b] + out.tokens.output[b]
+    out.paid[b] = out.cost.input[b] + out.cost.cached[b] + out.cost.output[b] +
+      out.cost.write[b] + out.cost.other[b]
+    out.totals.tokensInput += out.tokens.input[b]
+    out.totals.tokensCached += out.tokens.cached[b]
+    out.totals.tokensOutput += out.tokens.output[b]
+    out.totals.cost += out.paid[b]
+    out.totals.executions += out.executions[b]
+  }
+  out.totals.tokens = out.totals.tokensInput + out.totals.tokensCached + out.totals.tokensOutput
+  return out
+}
+
+/* --------------------------------------------------------- breakdowns -- */
+
+export type Dimension = 'model' | 'user'
+
+export interface BreakdownRow {
+  key: string
+  spend: number
+  /** Input + cached input. Both are prompt-side tokens the caller sent. */
+  tokensIn: number
+  tokensOut: number
+  tokens: number
+  executions: number
+  /**
+   * Effective unit price for this row, cost over count within one category.
+   *
+   * Blending across MODELS is fine and is what a per-user rate means. Blending
+   * across CATEGORIES is not — see CLAUDE.md. Cached input is a tenth of the
+   * input rate, so mixing them ranks by cache hit rate rather than by price.
+   */
+  inputRate: number | null
+  outputRate: number | null
+  shareTokens: number | null
+  shareSpend: number | null
+}
+
+/** Totals per model or per user, within the current user scope. */
+export function breakdown(block: RangeBlock, dim: Dimension, users?: ReadonlySet<string>): BreakdownRow[] {
+  const f = block.facts
+  const labels = dim === 'model' ? block.models : block.users
+  const idx = dim === 'model' ? f.m : f.u
+  const keep = predicate(block, { users })
+
+  const acc = labels.map(() => ({
+    spend: 0, tIn: 0, tCa: 0, tOu: 0, cIn: 0, cOu: 0, ex: 0,
+  }))
+
+  for (let i = 0; i < f.b.length; i++) {
+    if (!keep(i)) continue
+    const a = acc[idx[i]]
+    a.spend += f.cIn[i] + f.cCa[i] + f.cOu[i] + f.cWr[i] + f.cOt[i]
+    a.tIn += f.tIn[i]; a.tCa += f.tCa[i]; a.tOu += f.tOu[i]
+    a.cIn += f.cIn[i]; a.cOu += f.cOu[i]
+    a.ex += f.ex[i]
+  }
+
+  const rows = labels.map((key, i) => {
+    const a = acc[i]
+    const tokensIn = a.tIn + a.tCa
+    return {
+      key,
+      spend: a.spend,
+      tokensIn,
+      tokensOut: a.tOu,
+      tokens: tokensIn + a.tOu,
+      executions: a.ex,
+      inputRate: a.tIn > 0 ? (a.cIn / a.tIn) * 1_000_000 : null,
+      outputRate: a.tOu > 0 ? (a.cOu / a.tOu) * 1_000_000 : null,
+    }
+  }).filter((r) => r.executions > 0)
+
+  const totalTokens = rows.reduce((p, r) => p + r.tokens, 0)
+  const totalSpend = rows.reduce((p, r) => p + r.spend, 0)
+
+  return rows
+    .map((r) => ({
+      ...r,
+      shareTokens: totalTokens > 0 ? r.tokens / totalTokens : null,
+      shareSpend: totalSpend > 0 ? r.spend / totalSpend : null,
+    }))
+    .sort((a, b) => b.spend - a.spend)
+}
 
 /**
  * Running total across the block. Starts at zero by construction, so it is
@@ -116,102 +263,12 @@ export function runningTotal(values: readonly number[]): number[] {
   return values.map((v) => (acc += v))
 }
 
-export interface RangeSummary {
-  /** Total cost per bucket. */
-  paid: number[]
-  /** Total tokens per bucket. */
-  tokenTotals: number[]
-  totals: {
-    tokens: number
-    cost: number
-    executions: number
-  }
-}
-
-/** Per-category series for one model, scattered back onto the dense grid. */
-export interface ModelBreakdown {
-  tokens: { input: number[]; cached: number[]; output: number[] }
-  cost: { input: number[]; cached: number[]; output: number[]; write: number[]; other: number[] }
-}
-
-const dense = (n: number) => new Array<number>(n).fill(0)
-
-export function breakdownFor(block: RangeBlock, model: string): ModelBreakdown | null {
-  const s = block.models.find((m) => m.model === model)
-  if (!s) return null
-  const n = block.bucketCount
-  const out: ModelBreakdown = {
-    tokens: { input: dense(n), cached: dense(n), output: dense(n) },
-    cost: { input: dense(n), cached: dense(n), output: dense(n), write: dense(n), other: dense(n) },
-  }
-  s.h.forEach((bucket, j) => {
-    out.tokens.input[bucket] = s.tIn[j]
-    out.tokens.cached[bucket] = s.tCa[j]
-    out.tokens.output[bucket] = s.tOu[j]
-    out.cost.input[bucket] = s.cIn[j]
-    out.cost.cached[bucket] = s.cCa[j]
-    out.cost.output[bucket] = s.cOu[j]
-    out.cost.write[bucket] = s.cWr[j]
-    out.cost.other[bucket] = s.cOt[j]
-  })
-  return out
-}
-
-/**
- * Model totals for the window, with each model's share of it.
- *
- * Shares are computed against the sum of the models rather than the bucket
- * series so that the percentages always add to 100 — the two agree, but
- * deriving both from one source removes any chance of them drifting apart.
- */
-export function modelRows(block: RangeBlock): ModelRow[] {
-  const raw = block.models.map((m) => {
-    const tokensIn = sum(m.tIn) + sum(m.tCa)
-    const tokensOut = sum(m.tOu)
-    const inT = sum(m.tIn)
-    const inC = sum(m.cIn)
-    const ouC = sum(m.cOu)
-    return {
-      model: m.model,
-      spend: inC + sum(m.cCa) + ouC + sum(m.cWr) + sum(m.cOt),
-      tokensIn,
-      tokensOut,
-      tokens: tokensIn + tokensOut,
-      executions: sum(m.ex),
-      // Unit price per category. Never blend these: a blended rate ranks
-      // models by cache hit rate rather than by price.
-      inputRate: inT > 0 ? (inC / inT) * 1_000_000 : null,
-      outputRate: sum(m.tOu) > 0 ? (ouC / sum(m.tOu)) * 1_000_000 : null,
-    }
-  })
-
-  const totalTokens = raw.reduce((p, m) => p + m.tokens, 0)
-  const totalSpend = raw.reduce((p, m) => p + m.spend, 0)
-
-  return raw
-    .map((m) => ({
-      ...m,
-      shareTokens: totalTokens > 0 ? m.tokens / totalTokens : null,
-      shareSpend: totalSpend > 0 ? m.spend / totalSpend : null,
-    }))
-    .filter((m) => m.executions > 0)
-    .sort((a, b) => b.spend - a.spend)
-}
-
-export function summarise(block: RangeBlock): RangeSummary {
-  const paid = block.x.map((_, i) =>
-    block.cost.input[i] + block.cost.cached[i] + block.cost.output[i] +
-    block.cost.write[i] + block.cost.other[i])
-  const tokenTotals = block.x.map((_, i) =>
-    block.tokens.input[i] + block.tokens.cached[i] + block.tokens.output[i])
-
-  return {
-    paid,
-    tokenTotals,
-    totals: {
-      tokens: sum(tokenTotals),
-      cost: sum(paid),
-      executions: sum(block.executions),
-    },
-  }
+/** Every user seen across every range, for the filter's option list. */
+export function useAllUsers(data: AiriaData | null): string[] {
+  return useMemo(() => {
+    if (!data) return []
+    const seen = new Set<string>()
+    for (const block of Object.values(data.ranges)) for (const u of block.users) seen.add(u)
+    return [...seen].sort((a, b) => a.localeCompare(b))
+  }, [data])
 }

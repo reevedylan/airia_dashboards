@@ -10,6 +10,9 @@ export interface CardProps {
   valueSuffix?: string
   /** Extra controls in the header, left of the legend — e.g. a view toggle. */
   controls?: ReactNode
+  /** Hide the visible heading and let `controls` stand in for it (a tab
+   *  switcher). `title` is still the card's accessible name. */
+  hideTitle?: boolean
   legend?: readonly LegendItem[]
   activeSeries?: string | null
   onSeriesHover?: (label: string | null) => void
@@ -29,7 +32,7 @@ export interface CardProps {
  * band is never cropped into a nested scrollbar.
  */
 export function Card({
-  title, value, valueSuffix, controls, legend, activeSeries, onSeriesHover,
+  title, value, valueSuffix, controls, hideTitle, legend, activeSeries, onSeriesHover,
   table, footer, loading, className, children,
 }: CardProps) {
   const [showTable, setShowTable] = useState(false)
@@ -48,7 +51,7 @@ export function Card({
       */}
       <header className="viz-card__head">
         <div className="viz-card__headline">
-          <h2 className="viz-card__title">{title}</h2>
+          {hideTitle ? null : <h2 className="viz-card__title">{title}</h2>}
           {controls}
           {table ? (
             <button

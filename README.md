@@ -91,15 +91,22 @@ Two charts, each switchable between **Daily** (stacked bars by category) and
 - **Tokens** — cached input / input / output
 - **Token spend** — write cache / cached input / output / input / other
 
-Plus a **Models** table: spend, tokens in/out, each model's share of the
-window's tokens and spend, and the per-model rate card.
+Plus a **Breakdown** card with two tabs — **By model** and **By user** — each
+showing spend, % spend, tokens in/out, % tokens and the rate card, with search,
+sortable columns and show-top-N expansion.
 
-**Click a model to isolate it.** Both charts then show that model alone — the
-daily bars still broken out by category, the cumulative line as that model's
-own running total — each with the all-models figure behind it in grey on the
-same scale, so absolute shape and share of the whole read at once. The card
-headlines follow the plot; the KPI tiles keep the window totals. Click again,
-or "Show all models", to go back.
+A **User** filter sits beside the range tabs: a searchable multi-select whose
+selection is a real scope. Pick users and the KPI tiles, both charts and both
+breakdowns all recompute against only their data, exactly like changing the
+range. An empty selection means all users.
+
+**Click a row to isolate it.** Both charts then show that model or user
+alone — the daily bars still broken out by category, the cumulative line as its
+own running total — each with the *currently scoped* whole behind it in grey on
+the same scale, so absolute shape and share read at once. Isolate sits on top
+of the user filter rather than escaping it, and only one row across both tabs
+can be isolated at a time. The card headlines follow the plot; the KPI tiles
+keep the scope totals.
 
 Tokens and spend stay separate charts on purpose. They are different signals
 and they diverge whenever the usage mix shifts toward pricier models or

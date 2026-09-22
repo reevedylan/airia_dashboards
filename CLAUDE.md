@@ -127,6 +127,49 @@ below it down the page.
 Verified by measuring the toggle's and plot's bounding boxes in both views at
 1600px and 640px; all four must be identical.
 
+## The fact table
+
+Each range ships ONE sparse fact table keyed by (bucket, user, model), and
+`src/data/airia.ts` folds everything out of it: the KPI tiles, both charts, and
+both breakdowns.
+
+It has to work this way because the user filter is a real scope, not a
+highlight — filtering by user must recompute the *model* breakdown too, which a
+pre-aggregated per-model series cannot do. It stays cheap because the
+combinations that actually occur are few: about a thousand facts across all
+five ranges, from 21k source rows. Folding on render is less work than
+shipping every pre-aggregation would be.
+
+`seriesFor(block, filter)` folds to dense per-bucket series;
+`breakdown(block, dim, users)` folds to per-model or per-user totals with
+shares. Add a dimension by adding a column to the facts, not by adding
+another pre-aggregation.
+
+## Scoping and isolating
+
+Two different mechanisms, and the difference matters:
+
+- **The user filter is a SCOPE.** It behaves like changing the range:
+  everything recomputes, including both breakdowns. **An empty selection means
+  ALL users, not none** — treating it as none would blank the dashboard when
+  someone unticks their last choice.
+- **Isolate is a VIEW on top of that scope.** It never escapes the filter, so
+  the grey ghost is the filtered whole and the isolated share is a share of
+  the filter, not of the tenant.
+
+Isolate is **single-selection across both dimensions** (`{ dim, key } | null`),
+so isolating a user clears an isolated model and vice versa. Two ghost overlays
+at once would be meaningless.
+
+A controlled multi-select must expose a **relative** toggle (`onToggle(value)`),
+not an absolute `onChange(nextSet)`. Computing the next Set from the `selected`
+prop loses a toggle when two land in the same render batch, because both read
+the same stale value — caught with two programmatic clicks in one tick.
+
+`RankTable` is keyed by dimension in `App.tsx` so switching tabs remounts it.
+Without that, a sort by "out $/M" on models silently carried over to users and
+overrode the documented spend-descending default.
+
 ## Isolating a model
 
 Clicking a row in the Models table shows that model alone in **both** charts —
@@ -264,13 +307,28 @@ query, not just the three the original spec documented.
   field is kept in the ingest output as a faithful record but is deliberately
   not surfaced in the UI. Don't add a card for it.
 
+## User attribution
+
+`userEmail` is **empty on about 37% of gateway rows**. Those are grouped under
+an explicit `(unattributed)` member rather than dropped, so the Users breakdown
+always reconciles with the totals — omitting them would hide a third of the
+spend and make every percentage wrong.
+
+Per-user rates (`in $/M`, `out $/M`) blend across the MODELS that user used,
+which is what a per-user rate means. That is not the forbidden blend: blending
+across *categories* is what inverts the ordering, because cached input is a
+tenth of the input rate.
+
 ## Privacy — the repo is public
 
 `github.com/reevedylan/airia_dashboards` is public. Rows carry `userEmail`,
 `userFirstName`, `userLastName`.
 
-- The ingest projects away every personal field before writing its cache, so
-  even the gitignored `.cache/` holds none.
+- **The ingest cache and the aggregates now hold user emails.** They could
+  not stay projected away once user became a dimension of the dashboard.
+  Names, tenant and execution ids are still dropped. Both `.cache/` and
+  `public/data/*.json` are gitignored — verify with `git check-ignore` before
+  any commit, not by eye.
 - `public/data/*.json` is gitignored: aggregates aren't PII but they disclose
   tenant spend.
 - Before committing, confirm `git status` shows no `.cache/` and no
