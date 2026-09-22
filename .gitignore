@@ -14,8 +14,9 @@ dist/
 .env
 .env.local
 
-# ingest cache (raw rows - contains PII, never commit)
+# ingest cache, if a snapshot script is ever reintroduced
 .cache/
 
-# ingested aggregates - discloses tenant spend; regenerate with scripts/ingest-airia.mjs
+# no tenant data is written to disk any more, but keep these so a stray
+# snapshot cannot be committed by accident
 public/data/*.json

@@ -64,83 +64,50 @@ obligation is met — if you remove it, re-check those slots.
 
 ## The Airia gateway dashboard
 
-The demo in `src/App.tsx` runs on real Airia gateway usage. Data is fetched and
-aggregated by a Node script, never in the browser — the API key would otherwise
-ship to every visitor, and the endpoint needs recursive window-bisection over
-tens of thousands of rows.
+Paste an Airia API key and the dashboard builds itself. A key is scoped to one
+tenant, so a different key gives you that tenant's dashboard — which is how you
+hand this to a customer.
 
 ```bash
-echo 'AIRIA_API_KEY=akey_...' > .env      # gitignored
-node scripts/ingest-airia.mjs --days 90   # -> public/data/airia-gateway.json
-npm run dev
+npm install
+npm run dev                      # http://localhost:5173
+# or, to run the built app:
+npm run build && npm start       # http://localhost:4173
 ```
 
-`--from`/`--to` take dates, `--bucket` the resolution in minutes (default 5),
-`--source all` widens beyond Gateway executions. The script prints a
-reconciliation: every row's token counts and charge amounts must sum to the
-reported totals, and it reports how many did not.
+Then paste the key in the page. Nothing else to configure.
 
-**Nothing with data in it is committed.** `public/data/*.json` and `.cache/`
-are both gitignored — the aggregates are not PII but they disclose tenant
-spend, and this repo is public. A fresh clone shows an empty state with the
-ingest command.
+### Why it needs to run locally
 
-Two charts, each switchable between **Daily** (stacked bars by category) and
-**Cumulative** (running total from zero at the start of the selected window):
+**The Airia API sends no `Access-Control-Allow-Origin` header**, so a browser
+cannot call it directly however valid your key — a cross-origin `fetch` is
+blocked, and the preflight for `x-api-key` returns 403. The page therefore
+calls `/airia/...` on its own origin and something local forwards it: Vite's
+proxy under `npm run dev`, `server.mjs` under `npm start`.
 
-- **Tokens** — cached input / input / output
-- **Token spend** — write cache / cached input / output / input / other
+That means this is a **local tool**, not a link you can send. A customer runs
+their own copy and pastes their own key.
 
-Plus a **Breakdown** card with two tabs — **By model** and **By user** — each
-showing spend, % spend, tokens in/out, % tokens and the rate card, with search,
-sortable columns and show-top-N expansion.
+> **Don't host the proxy for other people.** Every request through it carries
+> the caller's API key, so whoever runs it can see those keys. `server.mjs`
+> binds to `127.0.0.1` for that reason.
+>
+> If you want a link you *can* share, the blocker is one server-side change:
+> CORS headers on `api/marketplace/v1/AIOperationExecutions`. With those, this
+> becomes a static page anyone can open.
 
-A **User** filter sits beside the range tabs: a searchable multi-select whose
-selection is a real scope. Pick users and the KPI tiles, both charts and both
-breakdowns all recompute against only their data, exactly like changing the
-range. An empty selection means all users.
+### Where the data lives
 
-**Click a row to isolate it.** Both charts then show that model or user
-alone — the daily bars still broken out by category, the cumulative line as its
-own running total — each with the *currently scoped* whole behind it in grey on
-the same scale, so absolute shape and share read at once. Isolate sits on top
-of the user filter rather than escaping it, and only one row across both tabs
-can be isolated at a time. The card headlines follow the plot; the KPI tiles
-keep the scope totals.
+Nowhere. Rows are fetched into the tab, aggregated in the browser, and dropped
+when you close it. No server stores anything and no tenant data touches disk —
+which is a better privacy position than the snapshot file this replaced.
 
-Tokens and spend stay separate charts on purpose. They are different signals
-and they diverge whenever the usage mix shifts toward pricier models or
-categories — merging them would hide exactly that.
+The key is held in memory. "Remember for this browser tab" is opt-in and uses
+`sessionStorage`, which clears when the tab closes; leave it off on a shared
+machine. The key is only ever sent as a request header — never in a URL, where
+it would land in logs and history.
 
-Each range has a fixed bucket size and bar count, so what you see is never a
-function of how wide the card happens to be:
-
-| Range | Bucket | Bars |
-|---|---|---|
-| 24H | 15 min | 96 |
-| 7D | 2 hr | 84 |
-| 14D | 4 hr | 84 |
-| 1M | 12 hr | 60 |
-| 3M | 1 day | 90 |
-
-Buckets are aligned to **local time** (`Australia/Sydney` by default,
-`--zone` to change), not UTC. The 12-hour buckets have to land on midnight and
-noon to read as AM/PM, and daily buckets on local midnight — UTC alignment
-would put them at 10am/10pm and split every Australian day in half. Daylight
-saving is handled.
-
-The ingest emits these ranges pre-bucketed — 414 buckets in total rather than
-25,921 five-minute ones for the client to reduce.
-
-Two measurement decisions worth knowing, documented in `CLAUDE.md`:
-
-- **The rate card is never blended.** `inputCost / inputCount` per model, not
-  total cost over total tokens. A blended rate ranks models by cache hit rate
-  rather than by price, and inverts the ordering: the cheapest model per token
-  ranked above one several times more expensive, because it cached less.
-- **Rates can be volume-weighted.** `LineChart` takes a `weights` array so a
-  ratio series aggregates as `sum(v*w)/sum(w)`; averaging per-bucket ratios is
-  a mean-of-means and was badly out on this data.
+### What it shows
 
 ## Components
 

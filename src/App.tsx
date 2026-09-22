@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 import {
   Card, AxisExtent, LineChart, BarChart, RankTable, StatTile,
-  TimeRangeBar, ToolbarButton, MultiSelect, Tabs,
+  TimeRangeBar, ToolbarButton, MultiSelect, Tabs, KeyGate,
   type RangeKey,
 } from './components'
 import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
-  useAiria, useAllUsers, seriesFor, breakdown, runningTotal,
+  useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
   type Dimension, type BreakdownRow,
 } from './data/airia'
+import { useApiKey, maskKey } from './lib/apiKey'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
@@ -49,7 +50,8 @@ export default function App() {
   const [tab, setTab] = useState<Dimension>('model')
   const [theme, setTheme] = useTheme()
 
-  const load = useAiria()
+  const { key, setKey, clear, remember } = useApiKey()
+  const load = useAiriaLive(key)
   const data = load.status === 'ready' ? load.data : null
   const allUsers = useAllUsers(data)
   const block = data ? data.ranges[range] : null
@@ -120,19 +122,36 @@ export default function App() {
         />
       }
       actions={
-        <ToolbarButton icon={<ThemeIcon />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? 'Light' : 'Dark'}
-        </ToolbarButton>
+        <>
+          {key ? (
+            <span className="viz-keychip">
+              <code>{maskKey(key)}</code>
+              {remember ? null : <span title="Held in memory only">· this tab</span>}
+              <button type="button" onClick={clear}>Change key</button>
+            </span>
+          ) : null}
+          <ToolbarButton icon={<ThemeIcon />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </ToolbarButton>
+        </>
       }
     />
   )
 
-  if (!block || !scoped || !shown || !fmtX) {
+  if (!key || load.status !== 'ready' || !block || !scoped || !shown || !fmtX) {
+    const busy = load.status === 'loading'
+      ? (load.progress && load.progress.total > 0
+          ? `${load.message} ${load.progress.done}/${load.progress.total} · ${full(load.progress.rows)} rows`
+          : load.message)
+      : null
     return (
       <div className="page">
         <Head />
-        {toolbar}
-        <EmptyState state={load} />
+        <KeyGate
+          onSubmit={(k, persist) => setKey(k, persist)}
+          busy={busy}
+          error={load.status === 'error' ? load.message : null}
+        />
       </div>
     )
   }
@@ -462,8 +481,9 @@ export default function App() {
       </div>
 
       <p className="page__note">
-        {data!.meta.source} executions only · {full(data!.meta.rowCount)} rows
-        ingested, {full(data!.meta.amountsReconciled)} of which reconcile exactly
+        {data!.meta.source} executions only · {full(data!.meta.rowCount)} of{' '}
+        {full(data!.meta.fetchedCount)} fetched rows, {full(data!.meta.amountsReconciled)} of
+        which reconcile exactly
         {data!.meta.amountsMismatched > 0 ? ` (${data!.meta.amountsMismatched} do not)` : ''} ·
         {' '}generated {new Date(data!.meta.generatedAt).toLocaleString('en-GB')}
       </p>
@@ -498,25 +518,6 @@ function Head() {
     <header className="page__head">
       <h1>Gateway usage</h1>
     </header>
-  )
-}
-
-function EmptyState({ state }: { state: { status: string; message?: string } }) {
-  if (state.status === 'loading') return <div className="empty">Loading usage data…</div>
-  if (state.status === 'missing') {
-    return (
-      <div className="empty">
-        <strong>No ingested data yet.</strong>
-        <p>The aggregates are gitignored, so a fresh clone starts empty. Generate them with:</p>
-        <pre>AIRIA_API_KEY=akey_… node scripts/ingest-airia.mjs</pre>
-      </div>
-    )
-  }
-  return (
-    <div className="empty">
-      <strong>Could not load usage data.</strong>
-      <p>{state.message}</p>
-    </div>
   )
 }
 

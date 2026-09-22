@@ -40,7 +40,7 @@ dark. Components reference them via `src/theme/palette.ts` (`series(1)` →
 ## Ranges, buckets and time zones
 
 Each range has a fixed bucket size and bar count, defined once in
-`RANGE_SPECS` in `scripts/ingest-airia.mjs`:
+`RANGE_SPECS` in `src/lib/airia/aggregate.ts`:
 
 | Range | Bucket | Bars | Window |
 |---|---|---|---|
@@ -53,7 +53,7 @@ Each range has a fixed bucket size and bar count, defined once in
 Window length is always `count x bucketMs`. The ingest emits each range
 already bucketed, so the client does a lookup, not a slice-and-downsample, and
 the bar count never depends on card width. Adding or changing a range means
-editing `RANGE_SPECS` and `RANGES` in `TimeRangeBar.tsx` together.
+editing `RANGE_SPECS` in `aggregate.ts` and `RANGES` in `TimeRangeBar.tsx` together.
 
 **Buckets are aligned to local time, not UTC** (`ZONE`, default
 `Australia/Sydney`). The 12-hour buckets must fall on local midnight and noon
@@ -268,12 +268,42 @@ Two related traps, learned the hard way on this dataset:
 `BarChart` (stacked bars share an axis, so mixing reducers within one would be
 meaningless).
 
-## The Airia API — things that bite
+## Architecture: the key is pasted, the fetch is local
 
-Source: `AIOperationExecutions`, windowed by `startTime`/`endTime`, key in
-`AIRIA_API_KEY` (`.env`, gitignored). All ~30 fields come back on the list
-query, not just the three the original spec documented.
+The dashboard builds itself from a key pasted in the UI. There is no ingest
+step and nothing on disk.
 
+**The Airia API sends no `Access-Control-Allow-Origin` header**, so the browser
+cannot call it directly — a cross-origin `fetch` fails and the preflight for
+`x-api-key` returns 403. Verified, not assumed. So:
+
+```
+browser --/airia/...--> same origin --> proxy --> prodaus.api.airia.ai
+                     (no CORS)          (Vite in dev, server.mjs in prod)
+```
+
+Both proxies exist for that one reason. Don't "simplify" by calling the API
+directly from the client; it cannot work until CORS is enabled upstream.
+
+`server.mjs` binds to 127.0.0.1 on purpose: it forwards whatever key the page
+sends, so hosting it for other people would expose their keys. Each tenant runs
+their own copy.
+
+### One aggregation, not two
+
+`src/lib/airia/aggregate.ts` is the only implementation — pure, no DOM, no
+network. A separate CLI ingest used to exist and drifted; don't reintroduce a
+second copy.
+
+`src/lib/airia/fetchAll.ts` owns the windowed fetch.
+
+### Things that bite
+
+- **Filter to `executionSourceType === 'Gateway'`.** The API returns every
+  execution type and non-Gateway rows outnumber Gateway roughly three to one,
+  so a missing filter inflates every figure on the page. This happened: the
+  client path shipped without it and read $2,325 against a true $1,643. The
+  footer prints kept-of-fetched counts so it cannot go unnoticed again.
 - **Silent truncation.** A 404 with an empty body means "response too large",
   not "not found", and a 200 can return fewer `items` than `totalCount`. Both,
   plus timeouts, mean *bisect the window and retry the halves*. Checking the
@@ -288,24 +318,26 @@ query, not just the three the original spec documented.
   `AnthropicWebSearchRequests`. Sum unknown keys; never hardcode one.
 - **Never blend a $/M rate across token categories.** Cached input bills at
   exactly 0.1x the input rate and output at exactly 5x, on every model. A
-  blended rate therefore ranks models by how often they hit cache rather than
-  by price, and it inverted the ordering on real data: the cheapest model per
-  token ranked above one several times more expensive, purely because it
-  cached less. Report the rate card instead —
-  `inputRate = inputCost / inputCount`, same for output. Those are stable per
-  model and are what "the cost of the model" means.
+  blended rate ranks models by cache hit rate rather than by price, and it
+  inverted the ordering on real data. Report the rate card:
+  `inputRate = inputCost / inputCount`, same for output. Blending across
+  *models* for a per-user rate is fine — that is what a per-user rate means.
 - **Write-cache tokens have a cost but no count**, so they can never appear in
   any per-token rate. They are a line item on the spend chart only.
-- **Money arrives as 11-decimal strings.** Accumulate as scaled integers
-  (`toScaled`), convert once at the end. Not floats.
-- `Date.parse` handles the 7-digit fractional seconds natively in V8; the
-  regex truncation the spec mentions is a Python-only workaround.
-- Don't filter `BalanceUsedGreaterThan=0` — it drops rows that carry real
-  token cost with zero balance drawn.
-- **`balanceUsed` does not apply to gateway traffic** and is zero throughout.
-  Gateway calls bill against the caller's own provider credentials, so the
-  field is kept in the ingest output as a faithful record but is deliberately
-  not surfaced in the UI. Don't add a card for it.
+- **Money arrives as 11-decimal strings.** Accumulate as scaled integers, then
+  convert once. Not floats.
+- `Date.parse` handles the 7-digit fractional seconds natively in V8.
+- Don't filter `BalanceUsedGreaterThan=0` — it drops rows with real token cost
+  and zero balance drawn.
+- **`balanceUsed` does not apply to gateway traffic** and is zero throughout,
+  so it is deliberately not surfaced. Don't add a card for it.
+
+### Key handling
+
+In memory by default (`src/lib/apiKey.ts`). "Remember" is opt-in and uses
+`sessionStorage`, not `localStorage`, so a key does not outlive the tab on a
+shared machine. Never put it in a URL, a log, or the page title. `maskKey()`
+for anything shown on screen.
 
 ## User attribution
 
@@ -323,26 +355,22 @@ tenth of the input rate.
 
 ## Privacy — the repo is public
 
-`github.com/reevedylan/airia_dashboards` is public. Rows carry `userEmail`,
-`userFirstName`, `userLastName`.
+`github.com/reevedylan/airia_dashboards` is public, and rows carry user emails.
 
-- **The ingest cache and the aggregates now hold user emails.** They could
-  not stay projected away once user became a dimension of the dashboard.
-  Names, tenant and execution ids are still dropped. Both `.cache/` and
-  `public/data/*.json` are gitignored — verify with `git check-ignore` before
-  any commit, not by eye.
-- `public/data/*.json` is gitignored: aggregates aren't PII but they disclose
-  tenant spend.
-- Before committing, confirm `git status` shows no `.cache/` and no
-  `public/data/`.
+Nothing needs gitignoring any more because **no tenant data is written to
+disk**: rows are fetched into the tab, folded in the browser, and dropped when
+it closes. `.env` and the old `public/data/*.json` and `.cache/` paths stay in
+`.gitignore` as a backstop so a stray snapshot cannot be committed.
+
+Before committing, verify with `git check-ignore` rather than by eye, and grep
+the diff for `akey_`/`ak-` prefixes and `@` addresses.
 
 ## Verifying a change
 
 ```
-node scripts/ingest-airia.mjs --days 90     # reconciliation is printed; 0 mismatches expected
 npx tsc -b && npm run build
 node scripts/validate-palette.mjs
-npm run dev
+npm run dev            # paste a key in the UI
 ```
 
 Then **look at it** — the validator checks colour, not layout:

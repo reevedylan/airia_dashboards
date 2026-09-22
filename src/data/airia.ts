@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RangeKey } from '../components'
+import { aggregate, earliestBoundary, SERVICE_KEY, type AggregateResult } from '../lib/airia/aggregate'
+import { fetchAll, probe, AuthError, type Progress } from '../lib/airia/fetchAll'
 
 /**
- * Loads the aggregates produced by `scripts/ingest-airia.mjs`.
+ * Builds the dashboard in the browser from a pasted API key.
  *
- * Each range ships one sparse fact table keyed by (bucket, user, model), and
+ * Each range is one sparse fact table keyed by (bucket, user, model), and
  * everything on the page is folded out of it here: the KPI tiles, both charts,
  * and the model and user breakdowns.
  *
@@ -12,7 +14,10 @@ import type { RangeKey } from '../components'
  * a highlight — filtering by user must recompute the model breakdown too,
  * which a pre-aggregated per-model series could not do. The tables stay small
  * (about a thousand facts across all five ranges) so folding on every render
- * is cheaper than shipping the pre-aggregations would be.
+ * is cheaper than pre-aggregating would be.
+ *
+ * Nothing is persisted: no server holds the data, none of it reaches disk, and
+ * the key lives only in the tab that pasted it.
  */
 
 export interface AiriaMeta {
@@ -22,7 +27,10 @@ export interface AiriaMeta {
   to: number
   source: string
   zone: string
+  /** Rows kept by the source filter — what the figures are built from. */
   rowCount: number
+  /** Rows fetched, before the source filter. */
+  fetchedCount: number
   rowsPlaced: number
   rangeTotalCount: number
   windowSplits: number
@@ -36,30 +44,8 @@ export interface AiriaMeta {
   warnings: string[]
 }
 
-/** Column-oriented facts. Every array is the same length; index i is one
- *  (bucket, user, model) combination that actually occurred. */
-export interface Facts {
-  b: number[]
-  u: number[]
-  m: number[]
-  ex: number[]
-  tIn: number[]; tCa: number[]; tOu: number[]
-  cIn: number[]; cCa: number[]; cOu: number[]; cWr: number[]; cOt: number[]
-}
-
-export interface RangeBlock {
-  bucketMs: number
-  bucketCount: number
-  /** IANA zone the bucket boundaries are aligned to. */
-  zone: string
-  /** Bucket start timestamps. Shipped rather than derived: locally-aligned
-   *  buckets are not a strict arithmetic grid across a DST change. */
-  x: number[]
-  /** Dimension dictionaries; `facts.u` and `facts.m` index into these. */
-  users: string[]
-  models: string[]
-  facts: Facts
-}
+export type { Facts, RangeBlock } from '../lib/airia/aggregate'
+import type { RangeBlock } from '../lib/airia/aggregate'
 
 export interface AiriaData {
   meta: AiriaMeta
@@ -67,28 +53,84 @@ export interface AiriaData {
 }
 
 export type LoadState =
-  | { status: 'loading' }
+  | { status: 'idle' }
+  | { status: 'loading'; message: string; progress?: Progress }
   | { status: 'ready'; data: AiriaData }
-  | { status: 'missing' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; auth?: boolean }
 
-export function useAiria(url = 'data/airia-gateway.json'): LoadState {
-  const [state, setState] = useState<LoadState>({ status: 'loading' })
+const ZONE = 'Australia/Sydney'
+
+/**
+ * Builds the dashboard from a pasted API key, in the browser.
+ *
+ * The Airia API sends no CORS headers, so the requests go to `/airia/...` on
+ * this origin and a proxy forwards them — see `src/lib/airia/fetchAll.ts`.
+ * Nothing is persisted: no server, no tenant data on disk, and the key lives
+ * only in this tab.
+ */
+export function useAiriaLive(key: string | null): LoadState {
+  const [state, setState] = useState<LoadState>({ status: 'idle' })
+  const run = useRef(0)
 
   useEffect(() => {
-    let alive = true
-    fetch(url)
-      .then(async (res) => {
-        // A gitignored data file simply isn't there on a fresh clone; that is
-        // an expected state with its own empty view, not an error.
-        if (res.status === 404) return { status: 'missing' as const }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return { status: 'ready' as const, data: (await res.json()) as AiriaData }
-      })
-      .then((next) => { if (alive) setState(next) })
-      .catch((err) => { if (alive) setState({ status: 'error', message: String(err.message ?? err) }) })
-    return () => { alive = false }
-  }, [url])
+    if (!key) { setState({ status: 'idle' }); return }
+    const token = ++run.current
+    const ctrl = new AbortController()
+    const live = () => token === run.current && !ctrl.signal.aborted
+
+    ;(async () => {
+      try {
+        const now = Date.now()
+        const from = earliestBoundary(now, ZONE)
+
+        setState({ status: 'loading', message: 'Checking the key…' })
+        const expected = await probe(key, from, now)
+        if (!live()) return
+
+        setState({ status: 'loading', message: 'Fetching executions…' })
+        const { rows, splits } = await fetchAll(key, from, now, (p) => {
+          if (live()) setState({ status: 'loading', message: 'Fetching executions…', progress: p })
+        }, ctrl.signal)
+        if (!live()) return
+
+        setState({ status: 'loading', message: 'Aggregating…' })
+        // Yield a frame so the message paints before a synchronous fold.
+        await new Promise((r) => requestAnimationFrame(() => r(null)))
+        const agg: AggregateResult = aggregate(rows, { now, zone: ZONE, source: 'Gateway' })
+        if (!live()) return
+
+        setState({
+          status: 'ready',
+          data: {
+            meta: {
+              generatedAt: new Date().toISOString(),
+              now, from, to: now,
+              source: 'Gateway',
+              zone: ZONE,
+              rowCount: agg.stats.rowCount,
+              fetchedCount: agg.stats.fetchedCount,
+              rowsPlaced: agg.stats.rowsPlaced,
+              rangeTotalCount: expected,
+              windowSplits: splits,
+              providers: agg.stats.providers,
+              otherChargeKeys: agg.stats.otherChargeKeys,
+              amountsReconciled: agg.stats.amountsReconciled,
+              amountsMismatched: agg.stats.amountsMismatched,
+              serviceKeyLabel: SERVICE_KEY,
+              warnings: agg.stats.warnings,
+            },
+            ranges: agg.ranges as AiriaData['ranges'],
+          },
+        })
+      } catch (err) {
+        if (!live()) return
+        const auth = err instanceof AuthError
+        setState({ status: 'error', message: err instanceof Error ? err.message : String(err), auth })
+      }
+    })()
+
+    return () => { ctrl.abort() }
+  }, [key])
 
   return state
 }
