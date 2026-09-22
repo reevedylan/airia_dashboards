@@ -4,9 +4,9 @@ import {
   TimeRangeBar, ToolbarButton, FilterIcon, SavedIcon,
   type RangeKey,
 } from './components'
-import { series } from './theme/palette'
+import { series, other as otherColor } from './theme/palette'
 import { axisDate, compact, currency, full, grainFor, percent, stamp } from './lib/format'
-import { useAiria, sliceRange, MIN_RATE_DENOMINATOR } from './data/airia'
+import { useAiria, sliceRange } from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
@@ -25,7 +25,10 @@ const C = {
   output: series(2),   // orange
   write: series(7),    // violet
   other: series(5),    // magenta
-  rate: series(1),
+  paid: series(1),
+  // The no-cache line is a hypothetical reference, not a measured series, so
+  // it takes the de-emphasis grey rather than a categorical slot.
+  counterfactual: otherColor,
 } as const
 
 export default function App() {
@@ -70,7 +73,9 @@ export default function App() {
     )
   }
 
-  const { x, tokens, cost, balanceUsed, executions, cacheHitRate, models, totals } = slice
+  // balanceUsed is deliberately not shown: it does not apply to gateway
+  // traffic, which bills against the caller's own provider credentials.
+  const { x, tokens, cost, executions, models, paid, withoutCache, totals } = slice
   const from = axisDate(x[0], grain)
   const to = axisDate(x[x.length - 1], grain)
   const rowStamp = (i: number) => stamp(x[i], load.data.meta.bucketMs < 86_400_000)
@@ -85,9 +90,6 @@ export default function App() {
   const rows = <T,>(fmt: (i: number) => T) =>
     activeBuckets.filter((_, n) => n % tableStride === 0).map(fmt)
 
-  const cacheDenominator = tokens.input.map((v, i) => v + tokens.cached[i])
-  const passthrough = totals.cost === 0 ? null : 1 - totals.balanceUsed / totals.cost
-  const anyBalance = balanceUsed.some((v) => v > 0)
 
   return (
     <div className="page">
@@ -98,12 +100,12 @@ export default function App() {
         <StatTile label="Token spend" value={currency(totals.cost)} />
         <StatTile label="Tokens" value={compact(totals.tokens)} />
         <StatTile
-          label="Balance used"
-          value={currency(totals.balanceUsed)}
-          delta={passthrough == null ? undefined : {
-            text: `${percent(passthrough, 0)} passthrough`,
+          label="Saved by caching"
+          value={currency(totals.saved)}
+          delta={totals.withoutCache === 0 ? undefined : {
+            text: `${percent(totals.saved / totals.withoutCache, 0)} off`,
             good: true,
-            vs: 'customer credentials',
+            vs: 'vs no caching',
           }}
         />
         <StatTile label="Executions" value={full(totals.executions)} />
@@ -199,48 +201,51 @@ export default function App() {
 
         <Card
           className="grid__wide"
-          title="Cache hit rate"
-          value={totals.cacheHitRate == null ? '—' : percent(totals.cacheHitRate)}
+          title="Cache savings"
+          value={currency(totals.saved)}
+          legend={[
+            { label: 'without caching', color: C.counterfactual, shape: 'line' },
+            { label: 'paid', color: C.paid, shape: 'line' },
+          ]}
+          activeSeries={active}
+          onSeriesHover={setActive}
           footer={
             <>
               <AxisExtent from={from} to={to} />
               <p className="card-note">
-                Cached share of input tokens, weighted by volume. Buckets under{' '}
-                {compact(MIN_RATE_DENOMINATOR)} input tokens are left blank rather than
-                plotted as a rate. The headline figure covers the whole range.
+                Cached input bills at a tenth of the input rate, so the grey line
+                rebills those tokens at full price and drops the write-cache charges
+                you would not have paid. Where grey dips below blue, writing the cache
+                cost more than reading it saved.
+                {totals.cacheHitRate == null ? '' : ` ${percent(totals.cacheHitRate)} of input tokens came from cache.`}
               </p>
             </>
           }
           table={{
             columns: [
               { key: 't', label: 'Time' },
-              { key: 'r', label: 'Cache hit rate', align: 'right' },
-              { key: 'n', label: 'Executions', align: 'right' },
+              { key: 'p', label: 'Paid', align: 'right' },
+              { key: 'w', label: 'Without caching', align: 'right' },
+              { key: 's', label: 'Saved', align: 'right' },
             ],
             rows: rows((i) => ({
               t: rowStamp(i),
-              r: cacheHitRate[i] == null ? '—' : percent(cacheHitRate[i]!),
-              n: full(executions[i]),
+              p: currency(paid[i], 4),
+              w: currency(withoutCache[i], 4),
+              s: currency(withoutCache[i] - paid[i], 4),
             })),
           }}
         >
           <LineChart
             x={x}
             height={176}
-            zeroBased={false}
-            formatValue={(n) => percent(n)}
-            formatTick={(n) => percent(n, 0)}
-            series={[{
-              key: 'rate',
-              label: 'cache hit rate',
-              color: C.rate,
-              values: cacheHitRate,
-              area: true,
-              // Weight by the ratio's own denominator, so a quiet bucket with
-              // one uncached request cannot drag the line to 0% alongside a
-              // bucket carrying ten thousand cached tokens.
-              weights: cacheDenominator,
-            }]}
+            activeSeries={active}
+            formatValue={(n) => currency(n, 4)}
+            formatTick={(n) => `$${compact(n)}`}
+            series={[
+              { key: 'without', label: 'without caching', color: C.counterfactual, values: withoutCache, reducer: 'sum' },
+              { key: 'paid', label: 'paid', color: C.paid, values: paid, reducer: 'sum' },
+            ]}
           />
         </Card>
 
@@ -252,10 +257,19 @@ export default function App() {
               { key: 'm', label: 'Model' },
               { key: 'c', label: 'Spend', align: 'right' },
               { key: 't', label: 'Tokens', align: 'right' },
+              { key: 'i', label: 'Input $/M', align: 'right' },
+              { key: 'o', label: 'Output $/M', align: 'right' },
+              { key: 'k', label: 'Cached', align: 'right' },
               { key: 'n', label: 'Executions', align: 'right' },
             ],
             rows: models.map((m) => ({
-              m: m.model, c: currency(m.cost), t: full(m.tokens), n: full(m.executions),
+              m: m.model,
+              c: currency(m.spend),
+              t: full(m.tokens),
+              i: m.inputRate == null ? '—' : currency(m.inputRate, 2),
+              o: m.outputRate == null ? '—' : currency(m.outputRate, 2),
+              k: m.cacheShare == null ? '—' : percent(m.cacheShare, 1),
+              n: full(m.executions),
             })),
           }}
         >
@@ -263,21 +277,24 @@ export default function App() {
             rows={models.map((m) => ({
               key: m.model,
               label: m.model,
-              value: m.cost,
-              secondary: m.tokens,
-              // Counted-token cost over counted tokens. Using total cost here
-              // would divide write-cache charges by a denominator that excludes
-              // write-cache tokens, inflating low-volume models without bound.
-              tertiary: m.tokens === 0 ? undefined : (m.costTokens / m.tokens) * 1_000_000,
+              value: m.spend,
+              cells: {
+                tokens: m.tokens,
+                inputRate: m.inputRate,
+                outputRate: m.outputRate,
+                cacheShare: m.cacheShare,
+              },
             }))}
             labelHeading="Model"
             valueHeading="Spend"
-            secondaryHeading="Tokens"
-            tertiaryHeading="$/M tok"
+            columns={[
+              { key: 'tokens', heading: 'Tokens', format: compact },
+              { key: 'inputRate', heading: 'in $/M', format: (n) => `$${n.toFixed(2)}` },
+              { key: 'outputRate', heading: 'out $/M', format: (n) => `$${n.toFixed(2)}` },
+              { key: 'cacheShare', heading: 'cached', format: (n) => percent(n, 0), muted: true },
+            ]}
             limit={6}
             formatValue={(n) => currency(n)}
-            formatSecondary={compact}
-            formatTertiary={(n) => `$${n.toFixed(2)}`}
           />
         </Card>
       </div>
@@ -289,7 +306,6 @@ export default function App() {
           ? ` (${load.data.meta.amountsMismatched} do not)`
           : ''} · {compact(load.data.meta.bucketCount)} buckets of {load.data.meta.bucketMs / 60_000} min ·
         generated {new Date(load.data.meta.generatedAt).toLocaleString('en-GB')}
-        {!anyBalance ? ' · every execution in this range ran on customer credentials, so balance used is zero throughout' : ''}
       </p>
 
       <PaletteSheet />

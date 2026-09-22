@@ -33,17 +33,21 @@ export interface AiriaData {
   cost: { input: number[]; cached: number[]; output: number[]; write: number[]; other: number[] }
   balanceUsed: number[]
   executions: number[]
-  byModel: Array<{ model: string; tokens: number; cost: number; costTokens: number; executions: number }>
-  byModelHourly: {
+  /**
+   * Per-model hourly series, SPARSE: `h` holds the hour indices where the
+   * model ran, and every other array is parallel to it. Counts (`*T`) and
+   * costs (`*C`) stay split per category so the rate card can be computed.
+   */
+  byModel: {
     hour0: number
     hourCount: number
-    models: string[]
-    tokens: Record<string, number[]>
-    cost: Record<string, number[]>
-    /** Cost of counted tokens only — excludes write-cache and other charges
-     *  that carry no token count, so a $/M rate stays comparable. */
-    costTokens: Record<string, number[]>
-    executions: Record<string, number[]>
+    models: Array<{
+      model: string
+      h: number[]
+      ex: number[]
+      inT: number[]; caT: number[]; ouT: number[]
+      inC: number[]; caC: number[]; ouC: number[]; wrC: number[]; otC: number[]
+    }>
   }
 }
 
@@ -88,10 +92,11 @@ export interface RangeSlice {
   cost: { input: number[]; cached: number[]; output: number[]; write: number[]; other: number[] }
   balanceUsed: number[]
   executions: number[]
-  /** Ratio per bucket, `null` where the bucket had no requests at all —
-   *  a share of nothing is undefined, not zero. */
-  cacheHitRate: (number | null)[]
-  models: Array<{ model: string; tokens: number; cost: number; costTokens: number; executions: number }>
+  models: ModelRow[]
+  /** What this traffic actually cost, per bucket. */
+  paid: number[]
+  /** What the same traffic would have cost with no caching at all. */
+  withoutCache: number[]
   totals: {
     tokens: number
     tokensInput: number
@@ -102,16 +107,33 @@ export interface RangeSlice {
     balanceUsed: number
     executions: number
     cacheHitRate: number | null
+    paid: number
+    withoutCache: number
+    saved: number
   }
+}
+
+export interface ModelRow {
+  model: string
+  spend: number
+  tokens: number
+  executions: number
+  /** The model's actual unit price, derived from its own cost/count per
+   *  category. Stable per model, and the honest basis for comparing two. */
+  inputRate: number | null
+  outputRate: number | null
+  cacheShare: number | null
 }
 
 const sum = (a: readonly number[]) => a.reduce((p, c) => p + c, 0)
 
 /**
- * Minimum input+cached tokens in a bucket before a cache-hit rate is
- * considered meaningful. One real inference request clears this comfortably.
+ * Cached input is billed at exactly one tenth of the input rate, so the same
+ * tokens read uncached would have cost ten times what was paid — and without
+ * caching there would be no write-cache charge at all.
  */
-export const MIN_RATE_DENOMINATOR = 1_000
+const CACHE_READ_DISCOUNT = 10
+
 
 /** Take the trailing `range` worth of buckets. The x axis is a strict
  *  arithmetic grid, so it is generated rather than stored. */
@@ -132,38 +154,44 @@ export function sliceRange(data: AiriaData, range: RangeKey): RangeSlice {
   const executions = cut(data.executions)
   const balanceUsed = cut(data.balanceUsed)
 
-  const cacheHitRate = executions.map((n, i) => {
-    if (n === 0) return null
-    const denom = tokens.input[i] + tokens.cached[i]
-    // A ratio over a handful of tokens is noise, not a rate: an 8-token probe
-    // with no cache read is a true 0% that says nothing about cache health,
-    // yet it plots identically to a sustained cache miss. Below the floor the
-    // bucket reports "no rate" and the line breaks instead of plunging.
-    if (denom < MIN_RATE_DENOMINATOR) return null
-    return tokens.cached[i] / denom
-  })
-
-  // Per-model figures must follow the selected range, so re-total the hourly
-  // series rather than reusing the whole-ingest byModel numbers.
-  const { hour0, hourCount, models: names } = data.byModelHourly
-  const hStart = Math.max(0, Math.min(hourCount, Math.ceil((startTs - hour0) / 3_600_000)))
-  const models = names
-    .map((model) => ({
-      model,
-      tokens: sum(data.byModelHourly.tokens[model].slice(hStart)),
-      cost: sum(data.byModelHourly.cost[model].slice(hStart)),
-      costTokens: sum(data.byModelHourly.costTokens[model].slice(hStart)),
-      executions: sum(data.byModelHourly.executions[model].slice(hStart)),
-    }))
+  // Per-model figures must follow the selected range, so re-total the sparse
+  // hourly series rather than reusing whole-ingest numbers.
+  const { hour0, models: sparse } = data.byModel
+  const hMin = Math.ceil((startTs - hour0) / 3_600_000)
+  const models: ModelRow[] = sparse
+    .map((m) => {
+      const keep = m.h.map((h, n) => (h >= hMin ? n : -1)).filter((n) => n >= 0)
+      const pick = (a: number[]) => keep.reduce((p, n) => p + a[n], 0)
+      const inT = pick(m.inT), caT = pick(m.caT), ouT = pick(m.ouT)
+      const inC = pick(m.inC), caC = pick(m.caC), ouC = pick(m.ouC)
+      return {
+        model: m.model,
+        spend: inC + caC + ouC + pick(m.wrC) + pick(m.otC),
+        tokens: inT + caT + ouT,
+        executions: pick(m.ex),
+        // Unit price per category. Never blend these: a blended rate ranks
+        // models by cache hit rate rather than by price, which inverts the
+        // ordering (haiku is 5x cheaper per token than opus but caches less,
+        // so it blends higher).
+        inputRate: inT > 0 ? (inC / inT) * 1_000_000 : null,
+        outputRate: ouT > 0 ? (ouC / ouT) * 1_000_000 : null,
+        cacheShare: inT + caT > 0 ? caT / (inT + caT) : null,
+      }
+    })
     .filter((m) => m.executions > 0)
-    .sort((a, b) => b.cost - a.cost)
+    .sort((a, b) => b.spend - a.spend)
 
   const tokensInput = sum(tokens.input)
   const tokensCached = sum(tokens.cached)
   const tokensOutput = sum(tokens.output)
 
+  const paid = x.map((_, i) =>
+    cost.input[i] + cost.cached[i] + cost.output[i] + cost.write[i] + cost.other[i])
+  const withoutCache = x.map((_, i) =>
+    cost.input[i] + cost.cached[i] * CACHE_READ_DISCOUNT + cost.output[i] + cost.other[i])
+
   return {
-    x, tokens, cost, balanceUsed, executions, cacheHitRate, models,
+    x, tokens, cost, balanceUsed, executions, models, paid, withoutCache,
     totals: {
       tokens: tokensInput + tokensCached + tokensOutput,
       tokensInput, tokensCached, tokensOutput,
@@ -172,6 +200,9 @@ export function sliceRange(data: AiriaData, range: RangeKey): RangeSlice {
       balanceUsed: sum(balanceUsed),
       executions: sum(executions),
       cacheHitRate: tokensInput + tokensCached === 0 ? null : tokensCached / (tokensInput + tokensCached),
+      paid: sum(paid),
+      withoutCache: sum(withoutCache),
+      saved: sum(withoutCache) - sum(paid),
     },
   }
 }

@@ -297,7 +297,7 @@
 
 /* Extra rank-table columns: the label cell stops claiming the full width, and
    a derived third column recedes so the two measured ones lead. */
-.viz-rank table:has(th:nth-child(3)) tbody th { width: auto; min-width: 40%; }
+.viz-rank[data-cols] tbody th { width: auto; min-width: 34%; }
 .viz-rank td.viz-rank__num--muted { color: var(--viz-text-muted); }
 .viz-rank thead th.viz-rank__num,
 .viz-rank td.viz-rank__num { padding-left: 14px; }

@@ -1,29 +1,32 @@
 import { useMemo, useState } from 'react'
 import { full, percent } from '../../lib/format'
 
+export interface RankColumn {
+  /** Matches a key in each row's `cells`. */
+  key: string
+  heading: string
+  format?: (n: number) => string
+  /** Recede a derived column so the measured ones lead. */
+  muted?: boolean
+}
+
 export interface RankRow {
   key: string
   label: string
-  /** Drives both the sort order and the inline bar width. */
+  /** Drives the sort order and the inline bar width. */
   value: number
-  /** Optional second measure, shown as its own column. */
-  secondary?: number
-  /** Optional third measure — usually something derived from the first two. */
-  tertiary?: number
+  /** Values for the extra columns, keyed by `RankColumn.key`. */
+  cells?: Record<string, number | null | undefined>
   /** Optional leading glyph — a flag, an avatar, an icon. */
   glyph?: string
 }
 
 export interface RankTableProps {
   rows: readonly RankRow[]
-  /** Column headings. */
   labelHeading: string
   valueHeading: string
-  /** Supplying a heading turns the matching row field into a column. */
-  secondaryHeading?: string
-  tertiaryHeading?: string
-  formatSecondary?: (n: number) => string
-  formatTertiary?: (n: number) => string
+  /** Extra columns, rendered in order after the value column. */
+  columns?: readonly RankColumn[]
   /** Rows shown before the "Show all" control appears. */
   limit?: number
   formatValue?: (n: number) => string
@@ -41,11 +44,8 @@ export interface RankTableProps {
  * the reader came for.
  */
 export function RankTable({
-  rows, labelHeading, valueHeading, limit = 6,
-  secondaryHeading, tertiaryHeading,
+  rows, labelHeading, valueHeading, columns = [], limit = 6,
   formatValue = (n) => full(n),
-  formatSecondary = (n) => full(n),
-  formatTertiary = (n) => full(n),
   barColor = 'var(--viz-seq-200)',
 }: RankTableProps) {
   const [expanded, setExpanded] = useState(false)
@@ -60,14 +60,15 @@ export function RankTable({
   }, [rows, expanded, limit])
 
   return (
-    <div className="viz-rank">
+    <div className="viz-rank" data-cols={columns.length || undefined}>
       <table>
         <thead>
           <tr>
             <th scope="col">{labelHeading}</th>
             <th scope="col" className="viz-rank__num">{valueHeading}</th>
-            {secondaryHeading ? <th scope="col" className="viz-rank__num">{secondaryHeading}</th> : null}
-            {tertiaryHeading ? <th scope="col" className="viz-rank__num">{tertiaryHeading}</th> : null}
+            {columns.map((c) => (
+              <th key={c.key} scope="col" className="viz-rank__num">{c.heading}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -87,14 +88,17 @@ export function RankTable({
                 </span>
               </th>
               <td className="viz-rank__num">{formatValue(row.value)}</td>
-              {secondaryHeading ? (
-                <td className="viz-rank__num">{row.secondary == null ? '—' : formatSecondary(row.secondary)}</td>
-              ) : null}
-              {tertiaryHeading ? (
-                <td className="viz-rank__num viz-rank__num--muted">
-                  {row.tertiary == null ? '—' : formatTertiary(row.tertiary)}
-                </td>
-              ) : null}
+              {columns.map((c) => {
+                const v = row.cells?.[c.key]
+                return (
+                  <td
+                    key={c.key}
+                    className={c.muted ? 'viz-rank__num viz-rank__num--muted' : 'viz-rank__num'}
+                  >
+                    {v == null || !Number.isFinite(v) ? '—' : (c.format ?? full)(v)}
+                  </td>
+                )
+              })}
             </tr>
           ))}
         </tbody>

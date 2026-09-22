@@ -281,24 +281,24 @@ function aggregate(rows) {
 
     const name = row.modelName || '(unspecified)'
     let m = models.get(name)
-    if (!m) { m = { model: name, tokens: 0, cost: 0n, costTokens: 0n, executions: 0 }; models.set(name, m) }
-    const rowTokens = tok.input + tok.cached + tok.output
+    if (!m) { m = { model: name, cost: 0n, executions: 0 }; models.set(name, m) }
     const rowCost = amtIn + amtCached + amtOut + write + other
-    // Cost attributable to the tokens we can actually COUNT. Write-cache and
-    // web-search charges have no token count, so including them in a $/M rate
-    // inflates it without bound on low-volume models.
-    const rowCostTokens = amtIn + amtCached + amtOut
-    m.tokens += rowTokens
     m.cost += rowCost
-    m.costTokens += rowCostTokens
     m.executions++
 
+    // Keep counts and costs split per category. A blended $/M rate ranks
+    // models by how often they hit cache rather than by price — haiku is 5x
+    // cheaper per token than opus but blends higher, because opus caches more.
+    // The rate card (cost/count per category) is the model's actual price.
     const hourKey = `${name}\u0000${Math.floor(t / HOUR_MS) * HOUR_MS}`
     let mh = modelHours.get(hourKey)
-    if (!mh) { mh = { tokens: 0, cost: 0n, costTokens: 0n, executions: 0 }; modelHours.set(hourKey, mh) }
-    mh.tokens += rowTokens
-    mh.cost += rowCost
-    mh.costTokens += rowCostTokens
+    if (!mh) {
+      mh = { inT: 0, caT: 0, ouT: 0, inC: 0n, caC: 0n, ouC: 0n, wrC: 0n, otC: 0n, executions: 0 }
+      modelHours.set(hourKey, mh)
+    }
+    mh.inT += tok.input; mh.caT += tok.cached; mh.ouT += tok.output
+    mh.inC += amtIn; mh.caC += amtCached; mh.ouC += amtOut
+    mh.wrC += write; mh.otC += other
     mh.executions++
   }
 
@@ -326,29 +326,27 @@ function aggregate(rows) {
   const hour0 = Math.floor(from / HOUR_MS) * HOUR_MS
   const hourCount = Math.max(1, Math.ceil((to - hour0) / HOUR_MS))
   const modelNames = [...models.values()].sort((a, b) => Number(b.cost - a.cost)).map((m) => m.model)
-  const perModel = { tokens: {}, cost: {}, costTokens: {}, executions: {} }
-  for (const name of modelNames) {
-    const tk = new Array(hourCount).fill(0)
-    const cs = new Array(hourCount).fill(0)
-    const ct = new Array(hourCount).fill(0)
-    const ex = new Array(hourCount).fill(0)
+
+  // SPARSE: only hours where a model actually ran. Dense would be
+  // models x hours x 9 metrics of mostly zeros; activity is under 10%.
+  const perModelSparse = modelNames.map((name) => {
+    const h = [], ex = []
+    const inT = [], caT = [], ouT = [], inC = [], caC = [], ouC = [], wrC = [], otC = []
     for (let i = 0; i < hourCount; i++) {
       const mh = modelHours.get(`${name}\u0000${hour0 + i * HOUR_MS}`)
       if (!mh) continue
-      tk[i] = mh.tokens
-      cs[i] = fromScaled(mh.cost)
-      ct[i] = fromScaled(mh.costTokens)
-      ex[i] = mh.executions
+      h.push(i); ex.push(mh.executions)
+      inT.push(mh.inT); caT.push(mh.caT); ouT.push(mh.ouT)
+      inC.push(fromScaled(mh.inC)); caC.push(fromScaled(mh.caC)); ouC.push(fromScaled(mh.ouC))
+      wrC.push(fromScaled(mh.wrC)); otC.push(fromScaled(mh.otC))
     }
-    perModel.tokens[name] = tk
-    perModel.cost[name] = cs
-    perModel.costTokens[name] = ct
-    perModel.executions[name] = ex
-  }
+    return { model: name, h, ex, inT, caT, ouT, inC, caC, ouC, wrC, otC }
+  })
+
 
   return {
     from0, bucketCount,
-    byModelHourly: { hour0, hourCount, models: modelNames, ...perModel },
+    byModel: { hour0, hourCount, models: perModelSparse },
     tokens: {
       input: col((b) => b.tokIn),
       cached: col((b) => b.tokCached),
@@ -366,9 +364,7 @@ function aggregate(rows) {
     },
     balanceUsed: col((b) => fromScaled(b.balance)),
     executions: col((b) => b.executions),
-    byModel: [...models.values()]
-      .map((m) => ({ ...m, cost: fromScaled(m.cost), costTokens: fromScaled(m.costTokens) }))
-      .sort((a, b) => b.cost - a.cost),
+
     stats: { providers, reconciledAmounts, mismatchedAmounts },
   }
 }
@@ -440,7 +436,6 @@ const out = {
   balanceUsed: agg.balanceUsed,
   executions: agg.executions,
   byModel: agg.byModel,
-  byModelHourly: agg.byModelHourly,
 }
 
 mkdirSync(dirname(OUT), { recursive: true })
@@ -457,4 +452,4 @@ if (otherChargeKeys.size) console.log(`  other charge keys: ${[...otherChargeKey
 console.log(`  balance $${sum(agg.balanceUsed).toFixed(4)}`)
 if (warnings.size) { console.log('\n  warnings:'); for (const w of warnings) console.log(`    - ${w}`) }
 console.log(`\n  wrote ${OUT.replace(ROOT + '/', '')} in ${((Date.now() - started) / 1000).toFixed(1)}s`)
-if (flag('verbose')) console.log(JSON.stringify(out.byModel, null, 2))
+if (flag('verbose')) console.log(JSON.stringify(out.byModel.models.map((m) => m.model), null, 2))

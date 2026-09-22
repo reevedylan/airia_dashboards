@@ -58,14 +58,20 @@ line; it is not zero.
 | peaks, SLO ceilings | `max` |
 | **rates and ratios** | `mean` **plus `weights`** |
 
-A rate averaged unweighted is a mean-of-means and is simply wrong. On this
-dataset the cache-hit rate read **79.2%** unweighted against a true **96.6%** —
-a 17-point error. Pass the ratio's denominator as `weights` and the reducer
-computes `sum(v*w)/sum(w)`.
+A rate averaged unweighted is a mean-of-means and is simply wrong — on this
+data it was out by double digits of percentage points. Pass the ratio's
+denominator as `weights` and the reducer computes `sum(v*w)/sum(w)`.
+No card uses `weights` today, but any rate series added later must.
 
-Also: a ratio over a tiny denominator is noise, not a rate. `src/data/airia.ts`
-nulls any bucket under `MIN_RATE_DENOMINATOR`, and the card says so in its
-footer. Don't silently drop that caveat.
+Two related traps, learned the hard way on this dataset:
+
+- **A ratio over a tiny denominator is noise, not a rate.** A 0% cache rate
+  derived from an 8-token probe plots identically to a sustained cache miss.
+  Floor the denominator and emit `null` below it, and say so on the card.
+- **Prefer the dollar form of a ratio.** A cache-hit rate pinned near 100%
+  conveys almost nothing; the same fact as "saved $X versus no caching" moves
+  meaningfully and is actionable. That is why the dashboard shows savings
+  rather than hit rate.
 
 `reducer` lives per-series on `LineChart` but is a chart-level prop on
 `BarChart` (stacked bars share an axis, so mixing reducers within one would be
@@ -89,15 +95,26 @@ query, not just the three the original spec documented.
 - **`additionalCharges` is a dynamically-keyed map.** Seen so far:
   `AnthropicWriteCache5MinTokens`, `AnthropicWriteCache1HourTokens`,
   `AnthropicWebSearchRequests`. Sum unknown keys; never hardcode one.
-- **Write-cache tokens have a cost but no count.** So any `$/M` figure must
-  divide *counted-token cost* by *counted tokens* — that's what `costTokens`
-  is for. Using total cost inflates low-volume models without bound.
+- **Never blend a $/M rate across token categories.** Cached input bills at
+  exactly 0.1x the input rate and output at exactly 5x, on every model. A
+  blended rate therefore ranks models by how often they hit cache rather than
+  by price, and it inverted the ordering on real data: the cheapest model per
+  token ranked above one several times more expensive, purely because it
+  cached less. Report the rate card instead —
+  `inputRate = inputCost / inputCount`, same for output. Those are stable per
+  model and are what "the cost of the model" means.
+- **Write-cache tokens have a cost but no count**, so they can never appear in
+  any per-token rate. They are a line item on the spend chart only.
 - **Money arrives as 11-decimal strings.** Accumulate as scaled integers
   (`toScaled`), convert once at the end. Not floats.
 - `Date.parse` handles the 7-digit fractional seconds natively in V8; the
   regex truncation the spec mentions is a Python-only workaround.
-- Don't filter `BalanceUsedGreaterThan=0` — it drops exactly the passthrough
-  rows (real cost, zero balance) that the dashboard is about.
+- Don't filter `BalanceUsedGreaterThan=0` — it drops rows that carry real
+  token cost with zero balance drawn.
+- **`balanceUsed` does not apply to gateway traffic** and is zero throughout.
+  Gateway calls bill against the caller's own provider credentials, so the
+  field is kept in the ingest output as a faithful record but is deliberately
+  not surfaced in the UI. Don't add a card for it.
 
 ## Privacy — the repo is public
 

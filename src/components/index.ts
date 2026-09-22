@@ -25,7 +25,7 @@ export type { BarChartProps, BarSeries } from './charts/BarChart'
 export { DonutChart } from './charts/DonutChart'
 export type { DonutChartProps, DonutSlice } from './charts/DonutChart'
 export { RankTable } from './charts/RankTable'
-export type { RankTableProps, RankRow } from './charts/RankTable'
+export type { RankTableProps, RankRow, RankColumn } from './charts/RankTable'
 export { Sparkline } from './charts/Sparkline'
 export type { SparklineProps } from './charts/Sparkline'
 

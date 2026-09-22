@@ -85,19 +85,24 @@ are both gitignored — the aggregates are not PII but they disclose tenant
 spend, and this repo is public. A fresh clone shows an empty state with the
 ingest command.
 
-Cards: Tokens (input / cached / output), Token spend (those three plus write
-cache and other charges), Cache hit rate, and Models with spend, tokens and an
-effective $/M rate.
+Cards: **Tokens** (input / cached / output), **Token spend** (those three plus
+write cache and non-token charges), **Cache savings** (what you paid against
+what the same traffic would have cost uncached), and **Models** with spend,
+volume and the per-model rate card.
 
 Three measurement decisions worth knowing, all documented in `CLAUDE.md`:
 
-- **Rates are volume-weighted.** Averaging per-bucket ratios is a mean-of-means:
-  the cache-hit rate read 79.2% that way against a true 96.6%.
-- **Ratios over tiny denominators are blanked**, not plotted — a 0% cache rate
-  from an 8-token probe says nothing and would dominate the chart.
-- **$/M divides counted-token cost by counted tokens.** Write-cache charges
-  have no token count, so including them inflates low-volume models without
-  bound.
+- **Savings, not hit rate.** A cache-hit percentage pinned near 100% conveys
+  little. Cached input bills at exactly a tenth of the input rate, so the same
+  tokens uncached would cost ten times what was paid — and there would be no
+  write-cache charge. That difference is a number that moves.
+- **The rate card is never blended.** `inputCost / inputCount` per model, not
+  total cost over total tokens. A blended rate ranks models by cache hit rate
+  rather than by price, and inverts the ordering: the cheapest model per token
+  ranked above one several times more expensive, because it cached less.
+- **Rates can be volume-weighted.** `LineChart` takes a `weights` array so a
+  ratio series aggregates as `sum(v*w)/sum(w)`; averaging per-bucket ratios is
+  a mean-of-means and was badly out on this data.
 
 ## Components
 
