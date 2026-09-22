@@ -96,7 +96,7 @@ export default function App() {
     return (t: number) => fmtX.label(t, next.get(t) ?? t + block.bucketMs)
   }, [block, fmtX])
 
-  const unattributed = data?.meta.unattributedLabel ?? '(unattributed)'
+  const serviceKey = data?.meta.serviceKeyLabel ?? 'Standard Key (service)'
 
   const toolbar = (
     <TimeRangeBar
@@ -116,7 +116,7 @@ export default function App() {
           onChange={setUserFilter}
           allLabel="All users"
           placeholder="Search users…"
-          renderOption={(v) => (v === unattributed ? <em>{v}</em> : v)}
+          renderOption={(v) => (v === serviceKey ? <em>{v}</em> : v)}
         />
       }
       actions={
@@ -422,7 +422,7 @@ export default function App() {
               {active
                 ? `Both charts are showing this ${active.dim} only. Click the row again, or "Show all ${DIM_LABEL[active.dim]}", to return to the combined view.`
                 : `Click a ${tab} to show it on its own in both charts, with the all-${DIM_LABEL[tab]} total behind it.`}
-              {tab === 'user' ? ` Traffic with no user on the record is grouped as ${unattributed}.` : ''}
+              {tab === 'user' ? ` Requests made with the tenant's standard service key rather than an individual's are grouped as ${serviceKey}.` : ''}
               {tab === 'user' && userFilter.size > 0
                 ? ' This list is scoped by the User filter too — use the filter above to change the selection.'
                 : ''}

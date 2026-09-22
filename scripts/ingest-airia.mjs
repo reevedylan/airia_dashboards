@@ -253,9 +253,13 @@ async function pool(tasks, size) {
 const warnings = new Set()
 const otherChargeKeys = new Set()
 
-/** Traffic with no user on the row. Kept as an explicit member rather than
- *  dropped, so the Users breakdown always reconciles with the totals. */
-const UNATTRIBUTED = '(unattributed)'
+/**
+ * Requests that carry no user — they were made with the tenant's standard
+ * service key rather than an individual's. Kept as an explicit member rather
+ * than dropped, so the Users breakdown always reconciles with the totals; it
+ * is about a third of gateway traffic.
+ */
+const SERVICE_KEY = 'Standard Key (service)'
 
 /**
  * Providers disagree about what `input` means, so normalise to three disjoint
@@ -349,7 +353,7 @@ function aggregate(rows) {
     providers[row.providerType ?? '(unknown)'] = (providers[row.providerType ?? '(unknown)'] ?? 0) + 1
 
     const model = row.modelName || '(unspecified)'
-    const user = (row.userEmail ?? '').trim() || UNATTRIBUTED
+    const user = (row.userEmail ?? '').trim() || SERVICE_KEY
     let counted = false
 
     for (const r of Object.values(ranges)) {
@@ -469,7 +473,7 @@ const out = {
     otherChargeKeys: [...otherChargeKeys],
     amountsReconciled: agg.stats.reconciled,
     amountsMismatched: agg.stats.mismatched,
-    unattributedLabel: UNATTRIBUTED,
+    serviceKeyLabel: SERVICE_KEY,
     warnings: [...warnings],
   },
   ranges: agg.ranges,

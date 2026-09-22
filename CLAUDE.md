@@ -309,10 +309,12 @@ query, not just the three the original spec documented.
 
 ## User attribution
 
-`userEmail` is **empty on about 37% of gateway rows**. Those are grouped under
-an explicit `(unattributed)` member rather than dropped, so the Users breakdown
-always reconciles with the totals — omitting them would hide a third of the
-spend and make every percentage wrong.
+`userEmail` is **empty on about 37% of gateway rows**: those requests were made
+with the tenant's standard service key rather than an individual's. They are
+grouped under an explicit `Standard Key (service)` member rather than dropped,
+so the Users breakdown always reconciles with the totals — omitting a third of
+the spend would make every percentage wrong. The label comes from
+`meta.serviceKeyLabel`, set once in the ingest; don't hardcode it in the UI.
 
 Per-user rates (`in $/M`, `out $/M`) blend across the MODELS that user used,
 which is what a per-user rate means. That is not the forbidden blend: blending

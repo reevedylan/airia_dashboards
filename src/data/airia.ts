@@ -30,8 +30,9 @@ export interface AiriaMeta {
   otherChargeKeys: string[]
   amountsReconciled: number
   amountsMismatched: number
-  /** Label used for traffic with no user on the row. */
-  unattributedLabel: string
+  /** Label for requests made with the tenant's standard service key rather
+   *  than an individual user's. */
+  serviceKeyLabel: string
   warnings: string[]
 }
 
