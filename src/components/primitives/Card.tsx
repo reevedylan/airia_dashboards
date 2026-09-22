@@ -63,9 +63,15 @@ export function Card({
             </button>
           ) : null}
         </div>
-        {legend || controls ? (
+        {/*
+          Rendered whenever the card declares a legend at all — pass an empty
+          array for a view that has no keys to show, and the row still holds
+          its height. Keying this off `controls` instead made the row appear
+          and disappear with a control, resizing the card.
+        */}
+        {legend ? (
           <div className="viz-card__keys">
-            {legend ? <Legend items={legend} active={activeSeries} onHover={onSeriesHover} /> : null}
+            <Legend items={legend} active={activeSeries} onHover={onSeriesHover} />
           </div>
         ) : null}
       </header>

@@ -109,6 +109,17 @@ slides sideways — and down — every time the view changes. And row two needs 
 fixed height rather than a minimum: a legend is a couple of pixels taller than
 an empty row, which is enough to nudge the plot.
 
+Two more rules that keep a card from resizing when a control appears:
+
+- **Row two renders when `legend` is defined at all**, not when the card
+  happens to have controls. Pass `legend={[]}` for a view with no keys to
+  show and the row still holds its height; a card with no legend (the Models
+  table) never gets one. Keying it off `controls` made the row appear and
+  disappear along with a button.
+- **Row one's height is fixed**, and an in-header control uses
+  `ToolbarButton size="sm"` to fit inside it. The default button is taller
+  than the row and stretched it.
+
 For the same reason both views of a chart render a one-line footer note. If
 only one view had one, the card would grow on toggle and shove everything
 below it down the page.

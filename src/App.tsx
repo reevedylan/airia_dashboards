@@ -180,7 +180,7 @@ export default function App() {
                 { label: 'input', color: C.input, shape: 'rect' },
                 { label: 'output', color: C.output, shape: 'rect' },
               ]
-            : undefined}
+            : []}
           activeSeries={hovered}
           onSeriesHover={setHovered}
           footer={
@@ -264,7 +264,7 @@ export default function App() {
                 { label: 'input', color: C.input, shape: 'rect' },
                 { label: 'other', color: C.other, shape: 'rect' },
               ]
-            : undefined}
+            : []}
           activeSeries={hovered}
           onSeriesHover={setHovered}
           footer={
@@ -345,7 +345,7 @@ export default function App() {
           title="Models"
           controls={
             active ? (
-              <ToolbarButton icon={<ClearIcon />} onClick={() => setIsolated(null)}>
+              <ToolbarButton size="sm" icon={<ClearIcon />} onClick={() => setIsolated(null)}>
                 Show all models
               </ToolbarButton>
             ) : undefined

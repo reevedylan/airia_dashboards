@@ -33,9 +33,21 @@ export function TimeRangeBar({ value, onChange, actions }: TimeRangeBarProps) {
   )
 }
 
-export function ToolbarButton({ icon, children, onClick }: { icon: React.ReactNode; children: React.ReactNode; onClick?: () => void }) {
+export interface ToolbarButtonProps {
+  icon: React.ReactNode
+  children: React.ReactNode
+  onClick?: () => void
+  /** `sm` fits inside a card's headline row without changing its height. */
+  size?: 'md' | 'sm'
+}
+
+export function ToolbarButton({ icon, children, onClick, size = 'md' }: ToolbarButtonProps) {
   return (
-    <button type="button" className="viz-btn" onClick={onClick}>
+    <button
+      type="button"
+      className={size === 'sm' ? 'viz-btn viz-btn--sm' : 'viz-btn'}
+      onClick={onClick}
+    >
       {icon}
       {children}
     </button>

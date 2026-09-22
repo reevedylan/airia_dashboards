@@ -49,6 +49,9 @@
 }
 .viz-btn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
 
+/* Sized to sit inside a card's headline row without changing its height. */
+.viz-btn--sm { padding: 4px 9px; font-size: 11.5px; border-radius: 6px; gap: 6px; }
+
 .viz-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border-radius: 6px;
@@ -78,10 +81,11 @@
 .viz-card__head { display: flex; flex-direction: column; gap: 8px; }
 
 /* Row one: title, view controls, then the table button pinned right. Nothing
-   here changes width with the selected view, so nothing moves. */
+   here changes width with the selected view, so nothing moves — and the
+   height is FIXED, so a control that appears cannot stretch the row either. */
 .viz-card__headline {
   display: flex; align-items: center; gap: 12px;
-  min-height: 28px;
+  height: 28px;
 }
 .viz-card__tablebtn { margin-left: auto; }
 
