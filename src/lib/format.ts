@@ -34,17 +34,6 @@ export function grainFor(spanMs: number): Grain {
   return 'month'
 }
 
-const FMT: Record<Grain, Intl.DateTimeFormat> = {
-  minute: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }),
-  // An hour-grain range spans days, so a bare "22:00" at each end is
-  // ambiguous — the day has to be on the label.
-  hour: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
-  day: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }),
-  month: new Intl.DateTimeFormat('en-GB', { month: 'short', year: '2-digit' }),
-}
-
-/** Short axis-tick label, e.g. "22 Feb" or "14:00". */
-export const axisDate = (t: number, grain: Grain): string => FMT[grain].format(new Date(t))
 
 const TOOLTIP_FMT: Record<Grain, Intl.DateTimeFormat> = {
   minute: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
@@ -53,16 +42,69 @@ const TOOLTIP_FMT: Record<Grain, Intl.DateTimeFormat> = {
   month: new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }),
 }
 
-/** Unambiguous label for tooltips. */
+/**
+ * Span-derived tooltip label — the charts' FALLBACK only.
+ *
+ * Prefer `bucketFormat()`: inferring a format from the total span drops the
+ * time of day on any range wider than about three days, which is how a
+ * 12-hour bucket ended up labelled with no AM/PM.
+ */
 export const fullDate = (t: number, grain: Grain): string => TOOLTIP_FMT[grain].format(new Date(t))
 
-const STAMP_DAY = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-const STAMP_TIME = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+/* ------------------------------------------------------ bucket labelling -- */
+
+export interface BucketFormat {
+  /** Compact label for the axis extent under a plot. */
+  tick: (t: number) => string
+  /** Full label naming the span a bucket covers, for tooltips and tables. */
+  label: (start: number, end: number) => string
+}
 
 /**
- * Row stamp for the table view. Pass `withTime` when consecutive rows are
- * less than a day apart, or the table shows the same date twice for two
- * different values.
+ * Labels derived from the BUCKET SIZE, not from the chart's total span, and
+ * rendered in the zone the buckets were aligned to.
+ *
+ * Both parts matter. Deriving the format from the span put 7D (2-hour
+ * buckets), 14D (4-hour) and 1M (12-hour) into a date-only format, so there
+ * was no way to tell which block you were hovering — on 1M, not even AM from
+ * PM. And because the buckets are aligned to `zone`, labelling them in the
+ * viewer's own zone would show a bucket that starts at local midnight as some
+ * arbitrary hour.
  */
-export const stamp = (t: number, withTime: boolean): string =>
-  (withTime ? STAMP_TIME : STAMP_DAY).format(new Date(t))
+export function bucketFormat(bucketMs: number, zone: string): BucketFormat {
+  const fmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', { timeZone: zone, ...opts })
+  const dayShort = fmt({ day: 'numeric', month: 'short' })
+  const dayMid = fmt({ weekday: 'short', day: 'numeric', month: 'short' })
+  const dayLong = fmt({ weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+  const time = fmt({ hour: '2-digit', minute: '2-digit', hour12: false })
+
+  // en-AU yields "AEST"/"AEDT"; most other locales give "GMT+10".
+  const zoneFmt = new Intl.DateTimeFormat('en-AU', { timeZone: zone, timeZoneName: 'short' })
+  const zoneAbbr = (t: number) =>
+    zoneFmt.formatToParts(new Date(t)).find((p) => p.type === 'timeZoneName')?.value ?? ''
+
+  const isDaily = bucketMs % 86_400_000 === 0
+  const isHalfDay = bucketMs === 43_200_000
+
+  /** A bucket that ends at midnight reads far better as 24:00 than as 00:00. */
+  const endTime = (t: number) => {
+    const s = time.format(new Date(t))
+    return s === '00:00' ? '24:00' : s
+  }
+
+  return {
+    tick: (t) => (isDaily ? dayShort.format(new Date(t)) : `${dayShort.format(new Date(t))}, ${time.format(new Date(t))}`),
+    label: (start, end) => {
+      if (isDaily) {
+        const days = Math.round(bucketMs / 86_400_000)
+        return days === 1
+          ? dayLong.format(new Date(start))
+          : `${dayShort.format(new Date(start))} – ${dayShort.format(new Date(end - 1))}`
+      }
+      const span = `${time.format(new Date(start))}–${endTime(end)}`
+      const half = isHalfDay ? `${time.format(new Date(start)).startsWith('00') ? 'AM' : 'PM'} ` : ''
+      return `${dayMid.format(new Date(start))} · ${half}${span} ${zoneAbbr(start)}`
+    },
+  }
+}

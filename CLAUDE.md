@@ -68,6 +68,35 @@ transition day's bucket is genuinely 23 or 25 hours long.
 `Custom` in the range bar is a placeholder control from the reference design
 with no block of its own; `dataRangeFor()` maps it to `3M`.
 
+## Labelling a bucket
+
+`bucketFormat(bucketMs, zone)` in `src/lib/format.ts` produces every x label.
+Two rules, both learned from getting it wrong:
+
+- **Derive the format from the BUCKET SIZE, never the chart's span.** The
+  charts' fallback (`grainFor` + `fullDate`) infers a format from the total
+  span, which put 7D (2-hour buckets), 14D (4-hour) and 1M (12-hour) into a
+  date-only format — on 1M you could not tell AM from PM. Always pass
+  `formatX` when the bucket size is known.
+- **Render in the zone the buckets were aligned to**, not the viewer's. A
+  bucket that starts at local midnight would otherwise read as an arbitrary
+  hour for anyone outside that zone.
+
+Labels name the span rather than just its start, because the question a reader
+has is "which block is this?":
+
+```
+15 min   Tue 22 Sept · 20:30–20:45 AEST
+2 hr     Tue 22 Sept · 20:00–22:00 AEST
+4 hr     Tue 22 Sept · 20:00–24:00 AEST
+12 hr    Tue 22 Sept · PM 12:00–24:00 AEST
+1 day    Tue, 22 Sept 2026
+```
+
+A bucket ending at midnight is shown as `24:00`, not `00:00`. The end comes
+from the next bucket's start, so a daylight-saving day's 23- or 25-hour bucket
+is labelled with its real span rather than start + bucketMs.
+
 ## Cumulative views
 
 Both charts switch between daily bars and a cumulative line. Two rules:

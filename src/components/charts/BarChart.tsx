@@ -29,6 +29,12 @@ export interface BarChartProps {
    *  usually want a shorter form: "$1.2K" on the axis, "$1,238.40" in the
    *  tooltip. */
   formatTick?: (n: number) => string
+  /**
+   * Labels the x position in the tooltip. Supply this whenever the bucket
+   * size is known: the chart's own fallback infers a format from the total
+   * span, which drops the time of day on any range wider than a few days.
+   */
+  formatX?: (t: number) => string
   /** Label the gridlines — see the note on LineChart. */
   yAxis?: boolean
 }
@@ -39,7 +45,7 @@ const MIN_BAR_PX = 2
 
 export function BarChart({
   x, series, height = 170, activeSeries = null,
-  formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick,
+  formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX,
 }: BarChartProps) {
   const [ref, size] = useSize<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -211,7 +217,7 @@ export function BarChart({
               y={Math.min(...model.columns[hover].segs.map((s) => s.top))}
               width={w}
               height={height}
-              title={fullDate(model.times[hover], grain)}
+              title={formatX ? formatX(model.times[hover]) : fullDate(model.times[hover], grain)}
               rows={rows}
               footer={bucketNote}
             />

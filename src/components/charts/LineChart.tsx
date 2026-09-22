@@ -51,6 +51,12 @@ export interface LineChartProps {
    *  tooltip. */
   formatTick?: (n: number) => string
   /**
+   * Labels the x position in the tooltip. Supply this whenever the bucket
+   * size is known: the chart's own fallback infers a format from the total
+   * span, which drops the time of day on any range wider than a few days.
+   */
+  formatX?: (t: number) => string
+  /**
    * Label the gridlines. On by default: without it the only way to read a
    * magnitude is to hover, and the axis is what carries the values no direct
    * label does. Turn it off only where a hero figure already gives the scale.
@@ -68,7 +74,7 @@ const PAD = { top: 10, right: 6, bottom: 4, left: 6 }
 
 export function LineChart({
   x, series, height = 170, activeSeries = null,
-  formatValue = compact, zeroBased = true, yTickCount = 3, yAxis = true, formatTick, pxPerPoint = 4,
+  formatValue = compact, zeroBased = true, yTickCount = 3, yAxis = true, formatTick, formatX, pxPerPoint = 4,
 }: LineChartProps) {
   const [ref, size] = useSize<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -252,7 +258,7 @@ export function LineChart({
               )}
               width={w}
               height={height}
-              title={fullDate(model.times[hover], grain)}
+              title={formatX ? formatX(model.times[hover]) : fullDate(model.times[hover], grain)}
               rows={hoveredRows}
             />
           ) : null}

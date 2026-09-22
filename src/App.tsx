@@ -5,7 +5,7 @@ import {
   type RangeKey,
 } from './components'
 import { series } from './theme/palette'
-import { axisDate, compact, currency, full, grainFor, stamp } from './lib/format'
+import { bucketFormat, compact, currency, full } from './lib/format'
 import { useAiria, summarise, runningTotal, dataRangeFor } from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
@@ -43,10 +43,20 @@ export default function App() {
   const block = load.status === 'ready' ? load.data.ranges[dataRangeFor(range)] : null
   const slice = useMemo(() => (block ? summarise(block) : null), [block])
 
-  const grain = useMemo(
-    () => (block && block.x.length > 1 ? grainFor(block.x[block.x.length - 1] - block.x[0]) : 'day'),
+  /* Labels come from the bucket size and the zone the buckets were aligned
+     to, not from the chart's total span. */
+  const fmtX = useMemo(
+    () => (block ? bucketFormat(block.bucketMs, block.zone) : null),
     [block],
   )
+
+  /** Each bucket's end is its neighbour's start, so a daylight-saving day's
+   *  23- or 25-hour bucket is labelled with its real span. */
+  const labelAt = useMemo(() => {
+    if (!block || !fmtX) return () => ''
+    const next = new Map(block.x.map((t, i) => [t, block.x[i + 1] ?? t + block.bucketMs]))
+    return (t: number) => fmtX.label(t, next.get(t) ?? t + block.bucketMs)
+  }, [block, fmtX])
 
   const toolbar = (
     <TimeRangeBar
@@ -64,7 +74,7 @@ export default function App() {
     />
   )
 
-  if (load.status !== 'ready' || !slice || !block) {
+  if (load.status !== 'ready' || !slice || !block || !fmtX) {
     return (
       <div className="page">
         <Head />
@@ -76,9 +86,9 @@ export default function App() {
 
   const { x, tokens, cost, executions, models } = block
   const { paid, tokenTotals, totals } = slice
-  const from = axisDate(x[0], grain)
-  const to = axisDate(x[x.length - 1], grain)
-  const rowStamp = (i: number) => stamp(x[i], block.bucketMs < 86_400_000)
+  const from = fmtX.tick(x[0])
+  const to = fmtX.tick(x[x.length - 1])
+  const rowStamp = (i: number) => labelAt(x[i])
 
   /* Table twins are sampled to a readable length. Sampling every Nth bucket
      would be near-useless here: only ~9% of five-minute buckets contain any
@@ -157,6 +167,7 @@ export default function App() {
               activeSeries={active}
               height={176}
               formatValue={(n) => full(n)}
+              formatX={labelAt}
               formatTick={compact}
               series={[
                 { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
@@ -170,6 +181,7 @@ export default function App() {
               height={176}
               activeSeries={active}
               formatValue={(n) => full(Math.round(n))}
+              formatX={labelAt}
               formatTick={compact}
               series={[
                 // 'max' not 'sum': a running total must not be re-summed if
@@ -237,6 +249,7 @@ export default function App() {
               activeSeries={active}
               height={176}
               formatValue={(n) => currency(n, 4)}
+              formatX={labelAt}
               formatTick={(n) => `$${compact(n)}`}
               series={[
                 { key: 'write', label: 'write cache', color: C.write, values: cost.write },
@@ -252,6 +265,7 @@ export default function App() {
               height={176}
               activeSeries={active}
               formatValue={(n) => currency(n)}
+              formatX={labelAt}
               formatTick={(n) => `$${compact(n)}`}
               series={[
                 { key: 'total', label: 'cumulative', color: C.total, values: spendCumulative, reducer: 'max', area: true },
