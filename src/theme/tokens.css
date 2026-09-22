@@ -87,6 +87,11 @@
   --viz-radius-chip:  6px;
   --viz-radius-mark:  4px;   /* rounded data-end on bars                    */
 
+  /* Height of a card's series-key row. Reserved whether or not a legend is
+     present, so switching a chart to a single-series view cannot shift the
+     plot underneath it. Must clear the tallest legend item. */
+  --viz-legend-h:     20px;
+
   --viz-bar-max:      24px;  /* bars never exceed this, however wide the band */
   --viz-gap-mark:     2px;   /* surface gap between touching marks          */
   --viz-stroke-line:  2px;   /* line series weight                          */

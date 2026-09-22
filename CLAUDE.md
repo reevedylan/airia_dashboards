@@ -97,6 +97,28 @@ A bucket ending at midnight is shown as `24:00`, not `00:00`. The end comes
 from the next bucket's start, so a daylight-saving day's 23- or 25-hour bucket
 is labelled with its real span rather than start + bucketMs.
 
+## Card header layout
+
+`Card` renders a header of **two fixed rows**, and the split is load-bearing:
+
+- **Row one** — title, `controls` (the view toggle), then the table button
+  pinned right. Nothing here changes width with the selected view.
+- **Row two** — series keys, at a *fixed* `--viz-legend-h`, reserved whether
+  or not a legend is present.
+
+Don't put the toggle back beside the legend. A legend's width changes with the
+series on show and wraps entirely at five items, so anything sharing its row
+slides sideways — and down — every time the view changes. And row two needs a
+fixed height rather than a minimum: a legend is a couple of pixels taller than
+an empty row, which is enough to nudge the plot.
+
+For the same reason both views of a chart render a one-line footer note. If
+only one view had one, the card would grow on toggle and shove everything
+below it down the page.
+
+Verified by measuring the toggle's and plot's bounding boxes in both views at
+1600px and 640px; all four must be identical.
+
 ## Cumulative views
 
 Both charts switch between daily bars and a cumulative line. Two rules:

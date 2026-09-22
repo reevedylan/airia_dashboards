@@ -36,15 +36,24 @@ export function Card({
 
   return (
     <section className={`viz-card${className ? ` ${className}` : ''}`} aria-label={title}>
+      {/*
+        Two fixed rows. The title, the view controls and the table button sit
+        on row one; series keys get row two of their own.
+
+        They cannot share a row: a legend's width changes with the series on
+        show (and wraps entirely at five items), so anything beside it slides
+        sideways — and down — whenever the view changes. Splitting them keeps
+        the controls still. Row two holds its height even with no legend, so
+        switching to a single-series view doesn't shift the plot either.
+      */}
       <header className="viz-card__head">
-        <h2 className="viz-card__title">{title}</h2>
-        <div className="viz-card__tools">
+        <div className="viz-card__headline">
+          <h2 className="viz-card__title">{title}</h2>
           {controls}
-          {legend ? <Legend items={legend} active={activeSeries} onHover={onSeriesHover} /> : null}
           {table ? (
             <button
               type="button"
-              className="viz-iconbtn"
+              className="viz-iconbtn viz-card__tablebtn"
               aria-pressed={showTable}
               title={showTable ? 'Show chart' : 'Show data table'}
               onClick={() => setShowTable((v) => !v)}
@@ -54,6 +63,11 @@ export function Card({
             </button>
           ) : null}
         </div>
+        {legend || controls ? (
+          <div className="viz-card__keys">
+            {legend ? <Legend items={legend} active={activeSeries} onHover={onSeriesHover} /> : null}
+          </div>
+        ) : null}
       </header>
 
       {value ? (

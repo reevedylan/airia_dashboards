@@ -135,9 +135,11 @@ export default function App() {
           footer={
             <>
               <AxisExtent from={from} to={to} />
-              {tokenView === 'cumulative' ? (
-                <p className="card-note">Running total from zero at the start of the selected window.</p>
-              ) : null}
+              <p className="card-note">
+                {tokenView === 'daily'
+                  ? `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
+                  : `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`}
+              </p>
             </>
           }
           table={tokenView === 'daily'
@@ -212,9 +214,11 @@ export default function App() {
           footer={
             <>
               <AxisExtent from={from} to={to} />
-              {spendView === 'cumulative' ? (
-                <p className="card-note">Running total from zero at the start of the selected window.</p>
-              ) : null}
+              <p className="card-note">
+                {spendView === 'daily'
+                  ? `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
+                  : `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`}
+              </p>
             </>
           }
           table={spendView === 'daily'
@@ -329,9 +333,7 @@ export default function App() {
         {load.data.meta.source} executions only · {full(load.data.meta.rowCount)} rows
         ingested, {full(load.data.meta.amountsReconciled)} of which reconcile exactly
         {load.data.meta.amountsMismatched > 0 ? ` (${load.data.meta.amountsMismatched} do not)` : ''} ·
-        {' '}{range === 'Custom' ? '3M' : range}: {block.bucketCount} bars of{' '}
-        {bucketLabel(block.bucketMs)}, aligned to {block.zone} · generated{' '}
-        {new Date(load.data.meta.generatedAt).toLocaleString('en-GB')}
+        {' '}generated {new Date(load.data.meta.generatedAt).toLocaleString('en-GB')}
       </p>
 
       <PaletteSheet />
