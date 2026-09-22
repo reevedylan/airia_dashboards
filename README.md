@@ -62,6 +62,43 @@ obligation is met — if you remove it, re-check those slots.
 
 ---
 
+## The Airia gateway dashboard
+
+The demo in `src/App.tsx` runs on real Airia gateway usage. Data is fetched and
+aggregated by a Node script, never in the browser — the API key would otherwise
+ship to every visitor, and the endpoint needs recursive window-bisection over
+tens of thousands of rows.
+
+```bash
+echo 'AIRIA_API_KEY=akey_...' > .env      # gitignored
+node scripts/ingest-airia.mjs --days 90   # -> public/data/airia-gateway.json
+npm run dev
+```
+
+`--from`/`--to` take dates, `--bucket` the resolution in minutes (default 5),
+`--source all` widens beyond Gateway executions. The script prints a
+reconciliation: every row's token counts and charge amounts must sum to the
+reported totals, and it reports how many did not.
+
+**Nothing with data in it is committed.** `public/data/*.json` and `.cache/`
+are both gitignored — the aggregates are not PII but they disclose tenant
+spend, and this repo is public. A fresh clone shows an empty state with the
+ingest command.
+
+Cards: Tokens (input / cached / output), Token spend (those three plus write
+cache and other charges), Cache hit rate, and Models with spend, tokens and an
+effective $/M rate.
+
+Three measurement decisions worth knowing, all documented in `CLAUDE.md`:
+
+- **Rates are volume-weighted.** Averaging per-bucket ratios is a mean-of-means:
+  the cache-hit rate read 79.2% that way against a true 96.6%.
+- **Ratios over tiny denominators are blanked**, not plotted — a 0% cache rate
+  from an 8-token probe says nothing and would dominate the chart.
+- **$/M divides counted-token cost by counted tokens.** Write-cache charges
+  have no token count, so including them inflates low-volume models without
+  bound.
+
 ## Components
 
 All exported from `src/components`:
@@ -127,6 +164,8 @@ can't be mistaken for a working chart.
 
 Copy `src/theme/`, `src/lib/`, `src/components/` and
 `scripts/validate-palette.mjs`. Import `tokens.css` and `kit.css` once at your
-entry point. `src/data/` and `src/demo/` are demo-only — the components take
-plain arrays (`x: number[]`, `values: number[]`), so wiring them to a real API
-means replacing that folder and nothing else.
+entry point. `src/data/` (Airia loading) and `src/demo/` (the palette sheet) are
+app-specific — the components take plain arrays (`x: number[]`,
+`values: (number | null)[]`), so wiring them to a different API means replacing
+that folder and nothing else. See `CLAUDE.md` for the full data contract,
+including how to choose a reducer.

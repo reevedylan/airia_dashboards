@@ -4,7 +4,12 @@ import { full, percent } from '../../lib/format'
 export interface RankRow {
   key: string
   label: string
+  /** Drives both the sort order and the inline bar width. */
   value: number
+  /** Optional second measure, shown as its own column. */
+  secondary?: number
+  /** Optional third measure — usually something derived from the first two. */
+  tertiary?: number
   /** Optional leading glyph — a flag, an avatar, an icon. */
   glyph?: string
 }
@@ -14,6 +19,11 @@ export interface RankTableProps {
   /** Column headings. */
   labelHeading: string
   valueHeading: string
+  /** Supplying a heading turns the matching row field into a column. */
+  secondaryHeading?: string
+  tertiaryHeading?: string
+  formatSecondary?: (n: number) => string
+  formatTertiary?: (n: number) => string
   /** Rows shown before the "Show all" control appears. */
   limit?: number
   formatValue?: (n: number) => string
@@ -32,7 +42,11 @@ export interface RankTableProps {
  */
 export function RankTable({
   rows, labelHeading, valueHeading, limit = 6,
-  formatValue = (n) => full(n), barColor = 'var(--viz-seq-200)',
+  secondaryHeading, tertiaryHeading,
+  formatValue = (n) => full(n),
+  formatSecondary = (n) => full(n),
+  formatTertiary = (n) => full(n),
+  barColor = 'var(--viz-seq-200)',
 }: RankTableProps) {
   const [expanded, setExpanded] = useState(false)
 
@@ -52,6 +66,8 @@ export function RankTable({
           <tr>
             <th scope="col">{labelHeading}</th>
             <th scope="col" className="viz-rank__num">{valueHeading}</th>
+            {secondaryHeading ? <th scope="col" className="viz-rank__num">{secondaryHeading}</th> : null}
+            {tertiaryHeading ? <th scope="col" className="viz-rank__num">{tertiaryHeading}</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -71,6 +87,14 @@ export function RankTable({
                 </span>
               </th>
               <td className="viz-rank__num">{formatValue(row.value)}</td>
+              {secondaryHeading ? (
+                <td className="viz-rank__num">{row.secondary == null ? '—' : formatSecondary(row.secondary)}</td>
+              ) : null}
+              {tertiaryHeading ? (
+                <td className="viz-rank__num viz-rank__num--muted">
+                  {row.tertiary == null ? '—' : formatTertiary(row.tertiary)}
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>

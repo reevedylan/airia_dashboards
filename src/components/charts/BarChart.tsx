@@ -10,7 +10,8 @@ export interface BarSeries {
   key: string
   label: string
   color: string
-  values: readonly number[]
+  /** `null` marks a bucket with no data. */
+  values: readonly (number | null)[]
 }
 
 export interface BarChartProps {
@@ -64,13 +65,21 @@ export function BarChart({
     const reduced = series.map((s) => ({
       ...s,
       points: buckets.map(([start, end]) => {
-        let sum = 0, max = -Infinity
-        for (let i = start; i < end; i++) { const v = s.values[i] ?? 0; sum += v; if (v > max) max = v }
-        return reducer === 'mean' ? sum / (end - start) : reducer === 'max' ? max : sum
-      }),
+        let sum = 0, max = -Infinity, n = 0
+        for (let i = start; i < end; i++) {
+          const v = s.values[i]
+          if (v == null || !Number.isFinite(v)) continue
+          sum += v
+          if (v > max) max = v
+          n += 1
+        }
+        if (n === 0) return null
+        return reducer === 'mean' ? sum / n : reducer === 'max' ? max : sum
+      }) as (number | null)[],
     }))
 
     const totals = times.map((_, i) => reduced.reduce((acc, s) => acc + Math.max(0, s.points[i] ?? 0), 0))
+
     const [y0, y1] = niceDomain(0, Math.max(...totals, 1), yTickCount)
 
     // Size the gutter to the labels it has to hold.
@@ -116,7 +125,10 @@ export function BarChart({
   }
 
   const rows: TooltipRow[] = model && hover != null
-    ? model.seriesMeta.map((s) => ({ color: s.color, label: s.label, value: formatValue(s.points[hover] ?? 0), swatch: 'rect' as const }))
+    ? model.seriesMeta.map((s) => {
+        const v = s.points[hover]
+        return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'rect' as const }
+      })
     : []
 
   const bucketNote = model && model.stride > 1

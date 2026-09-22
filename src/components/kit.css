@@ -97,8 +97,9 @@
 
 .viz-card__body {
   margin-top: 14px; flex: 1; min-width: 0;
-  /* Cards in a row share a height, so the plot centres in whatever is left. */
-  display: flex; flex-direction: column; justify-content: center;
+  /* Cards in a row share a height. Content starts at the top — centring a
+     short table leaves an odd gap under the title. */
+  display: flex; flex-direction: column; justify-content: flex-start;
 }
 .viz-card__body[data-loading] { opacity: 0.45; transition: opacity var(--viz-dur-base) var(--viz-ease); }
 
@@ -292,4 +293,19 @@
   fill: var(--viz-text-muted);
   font: 500 11px/1 var(--viz-font);
   font-variant-numeric: tabular-nums;
+}
+
+/* Extra rank-table columns: the label cell stops claiming the full width, and
+   a derived third column recedes so the two measured ones lead. */
+.viz-rank table:has(th:nth-child(3)) tbody th { width: auto; min-width: 40%; }
+.viz-rank td.viz-rank__num--muted { color: var(--viz-text-muted); }
+.viz-rank thead th.viz-rank__num,
+.viz-rank td.viz-rank__num { padding-left: 14px; }
+
+/* Small print under a plot — the caveat a number needs to be read correctly. */
+.card-note {
+  margin: 8px 0 0;
+  font: 400 11px/1.45 var(--viz-font);
+  color: var(--viz-text-muted);
+  max-width: 62ch;
 }

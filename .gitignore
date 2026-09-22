@@ -13,3 +13,9 @@ dist/
 # local env
 .env
 .env.local
+
+# ingest cache (raw rows - contains PII, never commit)
+.cache/
+
+# ingested aggregates - discloses tenant spend; regenerate with scripts/ingest-airia.mjs
+public/data/*.json

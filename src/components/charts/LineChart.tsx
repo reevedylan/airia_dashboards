@@ -10,11 +10,22 @@ export interface LineSeries {
   key: string
   label: string
   color: string
-  values: readonly number[]
+  /** `null` marks a bucket with no data — drawn as a break, not a zero. */
+  values: readonly (number | null)[]
   /** Adds the 10% wash under the line. Sensible for one series, noisy for many. */
   area?: boolean
   /** How samples combine when the series is denser than the pixels available. */
   reducer?: Reducer
+  /**
+   * Per-sample weights for the `mean` reducer, aligned with `values`.
+   *
+   * Required for any RATE or RATIO series. Averaging pre-computed ratios is a
+   * mean-of-means and does not equal the true rate: a five-minute bucket with
+   * one request would otherwise count as much as one with ten thousand. Pass
+   * the ratio's denominator here and the reducer computes
+   * sum(value x weight) / sum(weight), which is the real rate at any zoom.
+   */
+  weights?: readonly number[]
 }
 
 export interface LineChartProps {
@@ -74,16 +85,38 @@ export function LineChart({
     const times = buckets.map(([s, e]) => x[Math.floor((s + e - 1) / 2)])
     const reduced = series.map((s) => ({
       ...s,
+      // Nulls are skipped rather than counted as zero: a mean over a window
+      // that is half missing must average what exists, and a window that is
+      // entirely missing stays missing.
       points: buckets.map(([start, end]) => {
-        let sum = 0, max = -Infinity
-        for (let i = start; i < end; i++) { const v = s.values[i] ?? 0; sum += v; if (v > max) max = v }
-        const n = end - start
-        return s.reducer === 'sum' ? sum : s.reducer === 'max' ? max : sum / n
-      }),
+        let sum = 0, max = -Infinity, n = 0
+        let wSum = 0, wTotal = 0
+        for (let i = start; i < end; i++) {
+          const v = s.values[i]
+          if (v == null || !Number.isFinite(v)) continue
+          sum += v
+          if (v > max) max = v
+          n += 1
+          if (s.weights) {
+            const w = s.weights[i] ?? 0
+            wSum += v * w
+            wTotal += w
+          }
+        }
+        if (n === 0) return null
+        if (s.reducer === 'sum') return sum
+        if (s.reducer === 'max') return max
+        if (s.weights) return wTotal === 0 ? null : wSum / wTotal
+        return sum / n
+      }) as (number | null)[],
     }))
 
     let lo = Infinity, hi = -Infinity
-    for (const s of reduced) for (const v of s.points) { if (v < lo) lo = v; if (v > hi) hi = v }
+    for (const s of reduced) for (const v of s.points) {
+      if (v == null) continue
+      if (v < lo) lo = v
+      if (v > hi) hi = v
+    }
     if (!Number.isFinite(lo)) { lo = 0; hi = 1 }
     const [y0, y1] = niceDomain(zeroBased ? Math.min(0, lo) : lo, hi, yTickCount)
 
@@ -102,7 +135,7 @@ export function LineChart({
       gridlines: tickValues.map((v, i) => ({ v, y: ys(v), label: tickLabels[i] })),
       baseline: ys(y0),
       lines: reduced.map((s) => {
-        const pts: Pt[] = s.points.map((v, i) => ({ x: xs(i), y: ys(v) }))
+        const pts: (Pt | null)[] = s.points.map((v, i) => (v == null ? null : { x: xs(i), y: ys(v) }))
         return { ...s, pts, d: linePath(pts), fill: s.area ? areaPath(pts, ys(y0)) : null }
       }),
       xAt: (i: number) => xs(i),
@@ -121,7 +154,10 @@ export function LineChart({
   }
 
   const hoveredRows: TooltipRow[] = model && hover != null
-    ? model.lines.map((s) => ({ color: s.color, label: s.label, value: formatValue(s.points[hover] ?? 0), swatch: 'line' as const }))
+    ? model.lines.map((s) => {
+        const v = s.points[hover]
+        return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'line' as const }
+      })
     : []
 
   return (
@@ -181,17 +217,21 @@ export function LineChart({
                   y1={PAD.top} y2={model.baseline}
                   className="viz-crosshair"
                 />
-                {model.lines.map((s) => (
-                  <circle
-                    key={s.key}
-                    cx={model.xAt(hover)}
-                    cy={s.pts[hover]?.y ?? 0}
-                    r="4"
-                    fill={s.color}
-                    stroke="var(--viz-surface)"
-                    strokeWidth="2"
-                  />
-                ))}
+                {model.lines.map((s) => {
+                  const p = s.pts[hover]
+                  if (!p) return null
+                  return (
+                    <circle
+                      key={s.key}
+                      cx={model.xAt(hover)}
+                      cy={p.y}
+                      r="4"
+                      fill={s.color}
+                      stroke="var(--viz-surface)"
+                      strokeWidth="2"
+                    />
+                  )
+                })}
               </g>
             ) : null}
           </svg>
@@ -199,7 +239,10 @@ export function LineChart({
           {hover != null ? (
             <Tooltip
               x={model.xAt(hover)}
-              y={Math.min(...model.lines.map((s) => s.pts[hover]?.y ?? 0))}
+              y={Math.min(
+                ...model.lines.map((s) => s.pts[hover]?.y).filter((y): y is number => y != null),
+                height,
+              )}
               width={w}
               height={height}
               title={fullDate(model.times[hover], grain)}

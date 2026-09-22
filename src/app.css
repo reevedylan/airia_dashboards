@@ -83,3 +83,29 @@ body {
   color: var(--viz-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
 }
+
+/* KPI strip above the charts */
+.strip {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px; margin-bottom: 18px;
+}
+@media (max-width: 1180px) { .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px)  { .strip { grid-template-columns: minmax(0, 1fr); } }
+
+.empty {
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-card);
+  padding: 28px;
+  font: 400 13px/1.6 var(--viz-font);
+  color: var(--viz-text-secondary);
+}
+.empty strong { display: block; color: var(--viz-text-primary); font-size: 14px; margin-bottom: 6px; }
+.empty p { margin: 0 0 12px; }
+.empty pre {
+  margin: 0; padding: 12px 14px; overflow-x: auto;
+  background: var(--viz-surface-sunken);
+  border-radius: var(--viz-radius-ctl);
+  font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--viz-text-primary);
+}

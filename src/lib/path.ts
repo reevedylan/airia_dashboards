@@ -2,20 +2,42 @@
 
 export interface Pt { x: number; y: number }
 
-/** Polyline through every point. Straight segments — no smoothing, so the
- *  path never invents a value between two samples. */
-export function linePath(pts: readonly Pt[]): string {
-  if (pts.length === 0) return ''
-  let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`
-  for (let i = 1; i < pts.length; i++) d += `L${pts[i].x.toFixed(2)},${pts[i].y.toFixed(2)}`
+/**
+ * Polyline through every point. Straight segments — no smoothing, so the path
+ * never invents a value between two samples.
+ *
+ * A `null` entry is a genuine gap in the data and starts a new subpath, so the
+ * line breaks instead of being drawn straight across the missing stretch.
+ * Bridging a gap would assert a value that was never measured; dropping to
+ * zero would assert one that is wrong.
+ */
+export function linePath(pts: readonly (Pt | null)[]): string {
+  let d = ''
+  let open = false
+  for (const p of pts) {
+    if (!p) { open = false; continue }
+    d += `${open ? 'L' : 'M'}${p.x.toFixed(2)},${p.y.toFixed(2)}`
+    open = true
+  }
   return d
 }
 
-/** The same polyline, closed down to a baseline, for the area wash. */
-export function areaPath(pts: readonly Pt[], baseline: number): string {
-  if (pts.length === 0) return ''
-  const last = pts[pts.length - 1]
-  return `${linePath(pts)}L${last.x.toFixed(2)},${baseline.toFixed(2)}L${pts[0].x.toFixed(2)},${baseline.toFixed(2)}Z`
+/** The same polyline closed down to a baseline. Each contiguous run of points
+ *  is closed as its own shape, so a gap leaves a gap in the wash too. */
+export function areaPath(pts: readonly (Pt | null)[], baseline: number): string {
+  let d = ''
+  let run: Pt[] = []
+  const flush = () => {
+    if (run.length === 0) return
+    const first = run[0]
+    const last = run[run.length - 1]
+    d += linePath(run)
+    d += `L${last.x.toFixed(2)},${baseline.toFixed(2)}L${first.x.toFixed(2)},${baseline.toFixed(2)}Z`
+    run = []
+  }
+  for (const p of pts) { if (p) run.push(p); else flush() }
+  flush()
+  return d
 }
 
 /**
