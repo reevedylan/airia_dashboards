@@ -1,0 +1,295 @@
+/* ==========================================================================
+   viz-kit — component styles.
+   Reads only from the tokens in `theme/tokens.css`. No colour literals here.
+   ========================================================================== */
+
+.viz-sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* --------------------------------------------------------------- toolbar -- */
+
+.viz-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.viz-toolbar__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.viz-segmented {
+  display: inline-flex; align-items: stretch;
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+  padding: 3px; gap: 2px;
+}
+.viz-segmented__btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 13px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: none; border: 0; cursor: pointer;
+  padding: 8px 13px; border-radius: 6px;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-segmented__btn--custom { padding-left: 10px; border-right: 1px solid var(--viz-border); border-radius: 6px 0 0 6px; margin-right: 2px; }
+.viz-segmented__btn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+.viz-segmented__btn[aria-pressed='true'] {
+  background: var(--viz-seq-100); color: var(--viz-seq-700); font-weight: 600;
+}
+
+.viz-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 500 13px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+  padding: 10px 14px; cursor: pointer;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-btn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+
+.viz-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px;
+  color: var(--viz-text-muted);
+  background: none; border: 1px solid transparent; cursor: pointer;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-iconbtn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+.viz-iconbtn[aria-pressed='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
+
+:where(.viz-btn, .viz-iconbtn, .viz-segmented__btn, .viz-showall, .viz-legend__item):focus-visible,
+.viz-plot svg:focus-visible,
+.viz-tableview:focus-visible {
+  outline: 2px solid var(--viz-focus); outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ card -- */
+
+.viz-card {
+  display: flex; flex-direction: column;
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-card);
+  padding: 20px 22px 16px;
+  min-width: 0;
+}
+.viz-card__head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; min-height: 28px;
+}
+.viz-card__title {
+  font: 600 16px/1.3 var(--viz-font);
+  color: var(--viz-text-primary); margin: 0; letter-spacing: -0.01em;
+}
+.viz-card__tools { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+.viz-card__value {
+  font: 700 30px/1.15 var(--viz-font);
+  color: var(--viz-text-primary);
+  margin: 10px 0 0; letter-spacing: -0.02em;
+  /* Proportional figures — tabular-nums makes a large number look loose. */
+  font-variant-numeric: proportional-nums;
+}
+.viz-card__value-suffix { font-size: 0.6em; font-weight: 500; color: var(--viz-text-secondary); }
+
+.viz-card__body {
+  margin-top: 14px; flex: 1; min-width: 0;
+  /* Cards in a row share a height, so the plot centres in whatever is left. */
+  display: flex; flex-direction: column; justify-content: center;
+}
+.viz-card__body[data-loading] { opacity: 0.45; transition: opacity var(--viz-dur-base) var(--viz-ease); }
+
+.viz-card__foot { margin-top: 8px; }
+
+.viz-extent {
+  display: flex; justify-content: space-between;
+  font: 500 11.5px/1 var(--viz-font);
+  color: var(--viz-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- legend -- */
+
+.viz-legend { display: flex; align-items: center; gap: 14px; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
+.viz-legend__item {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 500 12.5px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: none; border: 0; padding: 2px; cursor: default;
+  transition: opacity var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-legend__item[data-dim] { opacity: 0.4; }
+
+.viz-key { display: inline-block; flex-shrink: 0; }
+.viz-key--dot { width: 8px; height: 8px; border-radius: 50%; }
+.viz-key--rect { width: 10px; height: 10px; border-radius: 2px; }
+.viz-key--line { width: 12px; height: 2px; border-radius: 1px; }
+
+/* --------------------------------------------------------------- tooltip -- */
+
+.viz-tooltip {
+  position: absolute; z-index: 5; pointer-events: none;
+  background: var(--viz-surface-raised);
+  border: 1px solid var(--viz-border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  box-shadow: 0 6px 20px -6px rgb(0 0 0 / 0.25), 0 1px 2px rgb(0 0 0 / 0.08);
+  font: 400 12px/1.4 var(--viz-font);
+  box-sizing: border-box;
+}
+.viz-tooltip__title {
+  font-weight: 600; font-size: 11.5px;
+  color: var(--viz-text-secondary);
+  padding-bottom: 7px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--viz-border);
+}
+.viz-tooltip__rows { display: flex; flex-direction: column; gap: 5px; }
+.viz-tooltip__row { display: flex; align-items: center; gap: 7px; }
+.viz-tooltip__label { color: var(--viz-text-secondary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The value leads: the reader has the series and wants the number. */
+.viz-tooltip__value { font-weight: 650; color: var(--viz-text-primary); font-variant-numeric: tabular-nums; }
+.viz-tooltip__footer {
+  margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--viz-border);
+  font-size: 11px; color: var(--viz-text-muted);
+}
+
+/* ------------------------------------------------------------------ plot -- */
+
+.viz-plot { position: relative; width: 100%; min-width: 0; }
+.viz-plot--centred { display: grid; place-items: center; }
+.viz-plot svg { display: block; overflow: visible; border-radius: 2px; }
+
+.viz-grid-line { stroke: var(--viz-grid); stroke-width: 1; shape-rendering: crispEdges; }
+.viz-axis-line { stroke: var(--viz-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.viz-crosshair { stroke: var(--viz-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.viz-band-hover { fill: var(--viz-surface-active); }
+
+.viz-sparkline { display: block; overflow: visible; }
+
+/* ----------------------------------------------------------------- donut -- */
+
+.viz-donut__centre {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; pointer-events: none; text-align: center;
+}
+.viz-donut__value {
+  font: 700 26px/1.1 var(--viz-font);
+  color: var(--viz-text-primary); letter-spacing: -0.02em;
+}
+.viz-donut__label {
+  font: 500 11px/1.35 var(--viz-font);
+  color: var(--viz-text-secondary);
+  text-wrap: balance;
+}
+
+/* ------------------------------------------------------------ rank table -- */
+
+.viz-rank table { width: 100%; border-collapse: collapse; }
+.viz-rank thead th {
+  font: 500 11.5px/1 var(--viz-font);
+  color: var(--viz-text-muted); text-align: left;
+  padding: 0 0 10px; font-weight: 500;
+}
+.viz-rank thead th.viz-rank__num { text-align: right; }
+
+.viz-rank tbody tr { transition: background var(--viz-dur-fast) var(--viz-ease); }
+.viz-rank tbody tr:hover { background: var(--viz-surface-hover); }
+
+.viz-rank tbody th {
+  font-weight: 400; text-align: left; padding: 3px 12px 3px 0; width: 100%;
+}
+.viz-rank__cell { position: relative; display: block; }
+.viz-rank__bar {
+  position: absolute; inset: 0 auto 0 0;
+  border-radius: var(--viz-radius-chip);
+  opacity: 0.65;
+}
+.viz-rank__text {
+  position: relative; display: inline-flex; align-items: center; gap: 7px;
+  font: 500 13px/1 var(--viz-font);
+  color: var(--viz-text-primary);
+  padding: 7px 10px;
+}
+.viz-rank__glyph { font-size: 14px; line-height: 1; }
+
+.viz-rank td.viz-rank__num {
+  font: 500 13px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  text-align: right; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 0;
+}
+
+.viz-showall {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; margin-top: 14px; padding: 10px;
+  font: 500 12.5px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+  cursor: pointer;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-showall:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+
+/* ------------------------------------------------------------ table view -- */
+
+.viz-tableview { overflow: auto; border-radius: 6px; }
+.viz-tableview table { width: 100%; border-collapse: collapse; font: 400 12.5px/1.5 var(--viz-font); }
+.viz-tableview thead th {
+  position: sticky; top: 0;
+  background: var(--viz-surface);
+  font-weight: 600; color: var(--viz-text-secondary);
+  padding: 6px 10px 6px 0; border-bottom: 1px solid var(--viz-border);
+  white-space: nowrap;
+}
+.viz-tableview tbody th { font-weight: 400; color: var(--viz-text-secondary); }
+.viz-tableview tbody th,
+.viz-tableview tbody td {
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--viz-border);
+  color: var(--viz-text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.viz-tableview tbody tr:last-child :where(th, td) { border-bottom: 0; }
+
+/* ------------------------------------------------------------- stat tile -- */
+
+.viz-stat {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 16px 18px;
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-card);
+}
+.viz-stat__label { font: 500 12px/1 var(--viz-font); color: var(--viz-text-secondary); }
+.viz-stat__value { font: 650 24px/1.15 var(--viz-font); color: var(--viz-text-primary); letter-spacing: -0.02em; }
+.viz-stat__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 20px; }
+.viz-stat__delta {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 500 11.5px/1 var(--viz-font);
+  color: var(--viz-status-critical);
+}
+.viz-stat__delta[data-good] { color: var(--viz-status-good); }
+.viz-stat__vs { color: var(--viz-text-muted); }
+
+/* ------------------------------------------------------- reduced motion -- */
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+}
+
+/* Axis tick labels: text tokens, never the series colour; tabular so the
+   column of numbers aligns. */
+.viz-tick {
+  fill: var(--viz-text-muted);
+  font: 500 11px/1 var(--viz-font);
+  font-variant-numeric: tabular-nums;
+}

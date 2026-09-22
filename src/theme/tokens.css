@@ -1,0 +1,185 @@
+/* ==========================================================================
+   VIZ KIT — PALETTE
+   --------------------------------------------------------------------------
+   THIS IS THE ONLY FILE YOU NEED TO EDIT TO RE-BRAND THE ENTIRE DASHBOARD.
+
+   Every chart, table, card and control reads from the tokens below. Nothing
+   in the component code hard-codes a colour. Change a value here and it
+   propagates everywhere, in both light and dark mode.
+
+   HOW IT'S ORGANISED
+     1. Surfaces & ink    — the chrome everything sits on
+     2. Series colours    — the 8 categorical slots charts draw from
+     3. Status colours    — reserved for good / warning / serious / critical
+     4. Sequential ramp   — one hue, light→dark, for magnitude
+     5. Shape & motion    — radii, spacing, durations (non-colour)
+
+   THE THREE RULES THAT KEEP IT ACCESSIBLE
+     a. Series slots are assigned IN ORDER (1, 2, 3 …), never cycled. A 9th
+        series folds into "Other" (--viz-other) instead of inventing a hue.
+     b. Status colours are reserved. Never use --viz-status-* as "series 4".
+     c. If you change the series hexes, re-run the validator before shipping:
+          node scripts/validate-palette.mjs
+        It checks lightness band, chroma floor, colourblind separation,
+        normal-vision separation and contrast, in both modes.
+
+   Dark values are declared twice on purpose: once for the OS setting
+   (prefers-color-scheme) and once for the in-app theme toggle
+   ([data-theme]), so an explicit choice always beats the OS.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* --- 1. SURFACES & INK ------------------------------------------------ */
+  --viz-page:            #f9f9f7;  /* the plane behind the cards            */
+  --viz-surface:         #fcfcfb;  /* card / chart surface                  */
+  --viz-surface-raised:  #ffffff;  /* tooltips, popovers, menus             */
+  --viz-surface-sunken:  #f2f2ef;  /* inline table bars, track backgrounds  */
+  --viz-surface-hover:   rgba(11, 11, 11, 0.04);
+  --viz-surface-active:  rgba(11, 11, 11, 0.07);
+
+  --viz-text-primary:    #0b0b0b;  /* headings, values                      */
+  --viz-text-secondary:  #52514e;  /* labels, legends                       */
+  --viz-text-muted:      #898781;  /* axis ticks, captions                  */
+
+  --viz-border:          rgba(11, 11, 11, 0.10);  /* hairline ring on cards */
+  --viz-grid:            #e1e0d9;  /* gridlines — solid hairline, recessive */
+  --viz-axis:            #c3c2b7;  /* baseline / axis rule                  */
+
+  --viz-focus:           #2a78d6;  /* keyboard focus ring                   */
+
+  /* --- 2. SERIES COLOURS ------------------------------------------------ *
+   * Assigned in order. Slots 1–3 are safe for ANY chart form (including
+   * scatter / donut, where every pair is compared). Slots 4–8 are safe for
+   * adjacent forms — stacked bars, grouped bars, multi-line.               */
+  --viz-series-1: #2a78d6;  /* blue    */
+  --viz-series-2: #eb6834;  /* orange  */
+  --viz-series-3: #1baf7a;  /* aqua    */
+  --viz-series-4: #eda100;  /* yellow  */
+  --viz-series-5: #e87ba4;  /* magenta */
+  --viz-series-6: #008300;  /* green   */
+  --viz-series-7: #4a3aa7;  /* violet  */
+  --viz-series-8: #e34948;  /* red     */
+
+  --viz-other:    #898781;  /* the "Other" bucket + de-emphasised series    */
+
+  /* --- 3. STATUS COLOURS (reserved — never used as a series) ------------ */
+  --viz-status-good:     #0ca30c;
+  --viz-status-warning:  #fab219;
+  --viz-status-serious:  #ec835a;
+  --viz-status-critical: #d03b3b;
+
+  /* --- 4. SEQUENTIAL RAMP (one hue, light→dark) ------------------------- *
+   * For magnitude: heatmaps, inline table bars, choropleths.
+   * Step 250 is the lightest that stays visible on the light surface.      */
+  --viz-seq-100: #cde2fb;
+  --viz-seq-200: #9ec5f4;
+  --viz-seq-300: #6da7ec;
+  --viz-seq-400: #3987e5;
+  --viz-seq-500: #256abf;
+  --viz-seq-600: #184f95;
+  --viz-seq-700: #0d366b;
+
+  /* --- 5. SHAPE & MOTION (non-colour) ----------------------------------- */
+  --viz-radius-card:  12px;
+  --viz-radius-ctl:   8px;
+  --viz-radius-chip:  6px;
+  --viz-radius-mark:  4px;   /* rounded data-end on bars                    */
+
+  --viz-bar-max:      24px;  /* bars never exceed this, however wide the band */
+  --viz-gap-mark:     2px;   /* surface gap between touching marks          */
+  --viz-stroke-line:  2px;   /* line series weight                          */
+  --viz-area-alpha:   0.10;  /* area fill opacity — a wash, not a block     */
+
+  --viz-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --viz-dur-fast: 90ms;
+  --viz-dur-base: 160ms;
+  --viz-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* --- DARK MODE -------------------------------------------------------------
+   The same hues, re-stepped for the dark surface — not an automatic flip.
+   Series 6 (green) is deliberately identical in both modes.               */
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+
+    --viz-page:            #0d0d0d;
+    --viz-surface:         #1a1a19;
+    --viz-surface-raised:  #242422;
+    --viz-surface-sunken:  #232321;
+    --viz-surface-hover:   rgba(255, 255, 255, 0.06);
+    --viz-surface-active:  rgba(255, 255, 255, 0.10);
+
+    --viz-text-primary:    #ffffff;
+    --viz-text-secondary:  #c3c2b7;
+    --viz-text-muted:      #898781;
+
+    --viz-border:          rgba(255, 255, 255, 0.10);
+    --viz-grid:            #2c2c2a;
+    --viz-axis:            #383835;
+
+    --viz-focus:           #3987e5;
+
+    --viz-series-1: #3987e5;
+    --viz-series-2: #d95926;
+    --viz-series-3: #199e70;
+    --viz-series-4: #c98500;
+    --viz-series-5: #d55181;
+    --viz-series-6: #008300;
+    --viz-series-7: #9085e9;
+    --viz-series-8: #e66767;
+
+    --viz-other:    #898781;
+
+    --viz-seq-100: #184f95;
+    --viz-seq-200: #1c5cab;
+    --viz-seq-300: #256abf;
+    --viz-seq-400: #2a78d6;
+    --viz-seq-500: #3987e5;
+    --viz-seq-600: #5598e7;
+    --viz-seq-700: #86b6ef;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --viz-page:            #0d0d0d;
+  --viz-surface:         #1a1a19;
+  --viz-surface-raised:  #242422;
+  --viz-surface-sunken:  #232321;
+  --viz-surface-hover:   rgba(255, 255, 255, 0.06);
+  --viz-surface-active:  rgba(255, 255, 255, 0.10);
+
+  --viz-text-primary:    #ffffff;
+  --viz-text-secondary:  #c3c2b7;
+  --viz-text-muted:      #898781;
+
+  --viz-border:          rgba(255, 255, 255, 0.10);
+  --viz-grid:            #2c2c2a;
+  --viz-axis:            #383835;
+
+  --viz-focus:           #3987e5;
+
+  --viz-series-1: #3987e5;
+  --viz-series-2: #d95926;
+  --viz-series-3: #199e70;
+  --viz-series-4: #c98500;
+  --viz-series-5: #d55181;
+  --viz-series-6: #008300;
+  --viz-series-7: #9085e9;
+  --viz-series-8: #e66767;
+
+  --viz-other:    #898781;
+
+  --viz-seq-100: #184f95;
+  --viz-seq-200: #1c5cab;
+  --viz-seq-300: #256abf;
+  --viz-seq-400: #2a78d6;
+  --viz-seq-500: #3987e5;
+  --viz-seq-600: #5598e7;
+  --viz-seq-700: #86b6ef;
+}
