@@ -91,8 +91,13 @@ Two charts, each switchable between **Daily** (stacked bars by category) and
 - **Tokens** — cached input / input / output
 - **Token spend** — write cache / cached input / output / input / other
 
-Plus a **Models** table: spend, tokens in, tokens out, and the per-model rate
-card.
+Plus a **Models** table: spend, tokens in/out, each model's share of the
+window's tokens and spend, and the per-model rate card.
+
+**Click a model to isolate it.** Both charts then show that model alone, still
+broken out by category, with the all-models total behind it in grey on the same
+scale — so its absolute shape and its share of the whole read at once. Click
+again, or "Show all models", to go back.
 
 Tokens and spend stay separate charts on purpose. They are different signals
 and they diverge whenever the usage mix shifts toward pricier models or

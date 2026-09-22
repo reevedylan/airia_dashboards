@@ -301,6 +301,7 @@ const emptyModel = () => ({
   inC: 0n, caC: 0n, ouC: 0n, wrC: 0n, otC: 0n,
   executions: 0,
 })
+const MODEL_KEY_SEP = '\u0000'
 
 function aggregate(rows) {
   // One bucket map and one model map per range.
@@ -309,8 +310,12 @@ function aggregate(rows) {
     return [key, {
       spec,
       boundaries,
+      index: new Map(boundaries.map((b, i) => [b, i])),
       buckets: new Map(boundaries.map((b) => [b, emptyBucket()])),
-      models: new Map(),
+      // Keyed by model + bucket index: isolating a model in the UI needs its
+      // own per-category bars, not just a range total.
+      modelBuckets: new Map(),
+      modelNames: new Set(),
     }]
   }))
 
@@ -339,7 +344,8 @@ function aggregate(rows) {
     let counted = false
 
     for (const r of Object.values(ranges)) {
-      const b = r.buckets.get(localFloor(t, r.spec.bucketMs))
+      const bucketStart = localFloor(t, r.spec.bucketMs)
+      const b = r.buckets.get(bucketStart)
       if (!b) continue                            // older than this range's window
       counted = true
       b.tokIn += tok.input; b.tokCached += tok.cached; b.tokOut += tok.output
@@ -347,8 +353,10 @@ function aggregate(rows) {
       b.amtWrite += write; b.amtOther += other
       b.executions++
 
-      let m = r.models.get(name)
-      if (!m) { m = emptyModel(); r.models.set(name, m) }
+      r.modelNames.add(name)
+      const mk = `${name}${MODEL_KEY_SEP}${r.index.get(bucketStart)}`
+      let m = r.modelBuckets.get(mk)
+      if (!m) { m = emptyModel(); r.modelBuckets.set(mk, m) }
       m.inT += tok.input; m.caT += tok.cached; m.ouT += tok.output
       m.inC += amtIn; m.caC += amtCached; m.ouC += amtOut
       m.wrC += write; m.otC += other
@@ -383,22 +391,35 @@ function aggregate(rows) {
         other: col((b) => fromScaled(b.amtOther)),
       },
       executions: col((b) => b.executions),
-      models: [...r.models.entries()]
-        .map(([model, m]) => ({
-          model,
-          spend: fromScaled(m.inC + m.caC + m.ouC + m.wrC + m.otC),
-          tokensIn: m.inT + m.caT,
-          tokensOut: m.ouT,
-          executions: m.executions,
-          // Unit price per category. Never blend these: a blended rate ranks
-          // models by cache hit rate rather than by price, which inverts the
-          // ordering (the cheapest model per token can blend highest simply
-          // because it caches least).
-          inputRate: m.inT > 0 ? (fromScaled(m.inC) / m.inT) * 1_000_000 : null,
-          outputRate: m.ouT > 0 ? (fromScaled(m.ouC) / m.ouT) * 1_000_000 : null,
-        }))
-        .filter((m) => m.executions > 0)
-        .sort((a, b) => b.spend - a.spend),
+      /**
+       * Per-model series, SPARSE: `h` holds the bucket indices where the model
+       * ran and every other array is parallel to it. Categories stay split so
+       * the UI can isolate one model and still stack it the same way, and so
+       * the rate card divides like with like.
+       *
+       * Sparse because most model/bucket pairs are empty — dense would be
+       * models x buckets x 9 arrays of mostly zeros.
+       */
+      models: [...r.modelNames]
+        .map((model) => {
+          const h = [], ex = []
+          const tIn = [], tCa = [], tOu = []
+          const cIn = [], cCa = [], cOu = [], cWr = [], cOt = []
+          for (let i = 0; i < r.spec.count; i++) {
+            const m = r.modelBuckets.get(`${model}${MODEL_KEY_SEP}${i}`)
+            if (!m) continue
+            h.push(i); ex.push(m.executions)
+            tIn.push(m.inT); tCa.push(m.caT); tOu.push(m.ouT)
+            cIn.push(fromScaled(m.inC)); cCa.push(fromScaled(m.caC)); cOu.push(fromScaled(m.ouC))
+            cWr.push(fromScaled(m.wrC)); cOt.push(fromScaled(m.otC))
+          }
+          return { model, h, ex, tIn, tCa, tOu, cIn, cCa, cOu, cWr, cOt }
+        })
+        .filter((m) => m.h.length > 0)
+        .sort((a, b) => {
+          const spend = (x) => x.cIn.concat(x.cCa, x.cOu, x.cWr, x.cOt).reduce((p, c) => p + c, 0)
+          return spend(b) - spend(a)
+        }),
     }
   }
 

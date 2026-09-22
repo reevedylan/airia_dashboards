@@ -314,13 +314,15 @@
 .viz-rank thead th.viz-rank__num,
 .viz-rank td.viz-rank__num { padding-left: 14px; }
 
-/* Small print under a plot — the caveat a number needs to be read correctly. */
+/* Small print under a plot — the caveat a number needs to be read correctly.
+   No prose cap: these are single-line status lines, and wrapping one changes
+   the card's height, which shifts everything below it. */
 .card-note {
   margin: 8px 0 0;
   font: 400 11px/1.45 var(--viz-font);
   color: var(--viz-text-muted);
-  max-width: 62ch;
 }
+.card-note[data-isolated] { color: var(--viz-text-secondary); }
 
 /* In-card view switch (daily / cumulative). Smaller sibling of .viz-segmented. */
 .viz-viewtoggle {
@@ -343,3 +345,36 @@
 }
 
 .card-note em { font-style: normal; color: var(--viz-text-secondary); font-weight: 600; }
+
+/* A total or reference row in a tooltip, set off from the series it sums. */
+.viz-tooltip__row--total {
+  margin-top: 5px; padding-top: 6px;
+  border-top: 1px solid var(--viz-border);
+}
+.viz-tooltip__row--total .viz-tooltip__label { color: var(--viz-text-primary); font-weight: 600; }
+.viz-key--none { width: 12px; height: 2px; }
+
+/* The unfiltered whole, behind an isolated series. Faint enough to read as
+   context rather than data, and never coloured — it is not a series. */
+.viz-ghost-bar { fill: var(--viz-other); opacity: 0.22; }
+
+/* --- selectable rank rows ------------------------------------------------ */
+
+.viz-rank__pick {
+  display: block; width: 100%; padding: 0;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  border-radius: var(--viz-radius-chip);
+}
+.viz-rank tr[data-selectable]:hover .viz-rank__bar { opacity: 0.85; }
+.viz-rank tr[data-selectable]:hover .viz-rank__text { color: var(--viz-text-primary); }
+
+/* Selection is a ring on the row, deliberately unlike the proportional bar —
+   the bar encodes magnitude and was being read as a selected state. */
+.viz-rank tr[data-selected] { background: var(--viz-surface-active); }
+.viz-rank tr[data-selected] .viz-rank__bar {
+  opacity: 1;
+  box-shadow: inset 0 0 0 1.5px var(--viz-focus);
+}
+.viz-rank tr[data-selected] .viz-rank__text { color: var(--viz-text-primary); font-weight: 600; }
+.viz-rank tr[data-selected] :where(th, td):first-child { border-radius: 4px 0 0 4px; }
+.viz-rank tr[data-selected] :where(th, td):last-child { border-radius: 0 4px 4px 0; }

@@ -25,6 +25,16 @@ export interface RankTableProps {
   rows: readonly RankRow[]
   labelHeading: string
   valueHeading: string
+  /**
+   * Makes rows selectable. `selectedKey` marks the active row; clicking it
+   * again passes `null`.
+   *
+   * The proportional bar doubles as the affordance: it is the only thing in
+   * the row that looks pressable, and it was previously mistaken for a
+   * selection state, so selection is marked distinctly with a ring.
+   */
+  selectedKey?: string | null
+  onSelect?: (key: string | null) => void
   /** Extra columns, rendered in order after the value column. */
   columns?: readonly RankColumn[]
   /** Rows shown before the "Show all" control appears. */
@@ -45,6 +55,7 @@ export interface RankTableProps {
  */
 export function RankTable({
   rows, labelHeading, valueHeading, columns = [], limit = 6,
+  selectedKey = null, onSelect,
   formatValue = (n) => full(n),
   barColor = 'var(--viz-seq-200)',
 }: RankTableProps) {
@@ -72,20 +83,39 @@ export function RankTable({
           </tr>
         </thead>
         <tbody>
-          {shown.map((row) => (
-            <tr key={row.key} title={`${row.label} — ${formatValue(row.value)} (${percent(row.value / (total || 1))} of total)`}>
-              <th scope="row">
-                <span className="viz-rank__cell">
-                  <span
-                    className="viz-rank__bar"
-                    style={{ width: `${Math.max(6, (row.value / max) * 100)}%`, background: barColor }}
-                    aria-hidden="true"
-                  />
-                  <span className="viz-rank__text">
-                    {row.glyph ? <span className="viz-rank__glyph" aria-hidden="true">{row.glyph}</span> : null}
-                    {row.label}
-                  </span>
+          {shown.map((row) => {
+            const selected = selectedKey === row.key
+            const cell = (
+              <span className="viz-rank__cell">
+                <span
+                  className="viz-rank__bar"
+                  style={{ width: `${Math.max(6, (row.value / max) * 100)}%`, background: barColor }}
+                  aria-hidden="true"
+                />
+                <span className="viz-rank__text">
+                  {row.glyph ? <span className="viz-rank__glyph" aria-hidden="true">{row.glyph}</span> : null}
+                  {row.label}
                 </span>
+              </span>
+            )
+            return (
+            <tr
+              key={row.key}
+              data-selected={selected ? '' : undefined}
+              data-selectable={onSelect ? '' : undefined}
+              title={`${row.label} — ${formatValue(row.value)} (${percent(row.value / (total || 1))} of total)`}
+            >
+              <th scope="row">
+                {onSelect ? (
+                  <button
+                    type="button"
+                    className="viz-rank__pick"
+                    aria-pressed={selected}
+                    onClick={() => onSelect(selected ? null : row.key)}
+                  >
+                    {cell}
+                  </button>
+                ) : cell}
               </th>
               <td className="viz-rank__num">{formatValue(row.value)}</td>
               {columns.map((c) => {
@@ -100,7 +130,8 @@ export function RankTable({
                 )
               })}
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
 

@@ -116,6 +116,39 @@ below it down the page.
 Verified by measuring the toggle's and plot's bounding boxes in both views at
 1600px and 640px; all four must be identical.
 
+## Isolating a model
+
+Clicking a row in the Models table shows that model alone in **both** charts —
+the table is the single filter source, so isolation never applies to one chart
+on its own. Three rules:
+
+- **The unfiltered whole stays on screen.** `BarChart`'s `ghost` prop draws it
+  in `--viz-other` behind the stack, and the ghost **joins the y-domain**. Not
+  rescaling is the whole point: the isolated model keeps both its absolute
+  shape and its size relative to the whole.
+- **Isolation is dropped when it stops matching.** A model with traffic in 3M
+  may have none in 24H, so `active` is derived by checking the isolation
+  against the range's own model list rather than trusting the stored value. The
+  stored value is kept, so going back to 3M restores it.
+- **Per-model bars need per-model-per-category data.** That is what the sparse
+  `models` arrays in each range block are for; `breakdownFor()` scatters one
+  model back onto the dense grid.
+
+Selection in `RankTable` is marked with a ring, deliberately unlike the
+proportional bar. The bar encodes magnitude and was being read as a selected
+state — that ambiguity is why rows previously looked pre-selected.
+
+## Stack segments
+
+`BarChart` **drops** a stack segment shorter than `MIN_SEG_PX` rather than
+drawing it. Forcing a minimum height on a negligible category turned it into a
+detached tick floating above the bar: its own 2px surface gap pushed it clear
+of the stack, so a rounding-error value read as a mark of its own. The gap is
+likewise only carved out of segments comfortably larger than it. Values that
+are too small to draw still appear in the tooltip, which is where that detail
+belongs — verified by asserting the largest gap between consecutive painted
+segments is exactly the intended 2px.
+
 ## Cumulative views
 
 Both charts switch between daily bars and a cumulative line. Two rules:

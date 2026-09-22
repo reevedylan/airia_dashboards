@@ -37,15 +37,25 @@ export interface BarChartProps {
   formatX?: (t: number) => string
   /** Label the gridlines — see the note on LineChart. */
   yAxis?: boolean
+  /**
+   * A faint reference series drawn BEHIND the stack, on the same scale — for
+   * showing the unfiltered whole while the stack shows an isolated part.
+   *
+   * It joins the y-domain, so isolating a series does not rescale the axis and
+   * the part keeps its true size relative to the whole.
+   */
+  ghost?: { label: string; values: readonly (number | null)[] }
 }
 
 const PAD = { top: 10, right: 6, bottom: 2, left: 6 }
 /** A bar narrower than this is a sliver that aliases into a smear. */
 const MIN_BAR_PX = 2
+/** A stack segment shorter than this is dropped rather than drawn. */
+const MIN_SEG_PX = 1
 
 export function BarChart({
   x, series, height = 170, activeSeries = null,
-  formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX,
+  formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX, ghost,
 }: BarChartProps) {
   const [ref, size] = useSize<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -86,7 +96,16 @@ export function BarChart({
 
     const totals = times.map((_, i) => reduced.reduce((acc, s) => acc + Math.max(0, s.points[i] ?? 0), 0))
 
-    const [y0, y1] = niceDomain(0, Math.max(...totals, 1), yTickCount)
+    // Bucket the ghost the same way, so it lines up with the stack.
+    const ghostPoints = ghost
+      ? buckets.map(([start, end]) => {
+          let acc = 0
+          for (let i = start; i < end; i++) acc += Math.max(0, ghost.values[i] ?? 0)
+          return reducer === 'mean' ? acc / Math.max(1, end - start) : acc
+        })
+      : null
+
+    const [y0, y1] = niceDomain(0, Math.max(...totals, ...(ghostPoints ?? []), 1), yTickCount)
 
     // Size the gutter to the labels it has to hold.
     const tickFmt = formatTick ?? formatValue
@@ -101,26 +120,41 @@ export function BarChart({
     const gap = band.width > 4 ? 2 : 0
     const radius = Math.min(4, band.width / 2)
 
-    // Stack from the baseline up, holding a surface gap between segments.
+    /**
+     * Stack from the baseline up.
+     *
+     * A segment shorter than MIN_SEG_PX is not drawn at all. Forcing a
+     * minimum height on a negligible category turned it into a detached tick
+     * floating above the bar — its own surface gap pushed it clear of the
+     * stack, so a rounding-error value read as a mark of its own. Its value is
+     * still in the tooltip, which is where that detail belongs.
+     *
+     * The gap is likewise only carved out of segments comfortably larger than
+     * it; otherwise a small-but-real segment would detach the same way.
+     */
     const columns = times.map((_, i) => {
       let cursor = baseline
+      let drawn = 0
       const segs = reduced.map((s) => {
         const v = Math.max(0, s.points[i] ?? 0)
         const raw = baseline - ys(v)
-        const h = Math.max(v > 0 ? 0.6 : 0, raw - (reduced.length > 1 ? gap : 0))
-        const top = cursor - h
-        cursor = top - (reduced.length > 1 ? gap : 0)
-        return { key: s.key, label: s.label, color: s.color, value: v, top, h }
+        const base = { key: s.key, label: s.label, color: s.color, value: v }
+        if (raw < MIN_SEG_PX) return { ...base, top: cursor, h: 0 }
+        const lead = drawn > 0 && reduced.length > 1 && raw > gap * 2 ? gap : 0
+        const top = cursor - raw
+        cursor = top
+        drawn += 1
+        return { ...base, top, h: raw - lead }
       })
-      return { x: band.at(i), segs }
+      return { x: band.at(i), segs, ghost: ghostPoints ? baseline - ys(ghostPoints[i]) : 0 }
     })
 
     return {
-      times, columns, band, baseline, stride, radius, left,
+      times, columns, band, baseline, stride, radius, left, ghostPoints,
       gridlines: tickValues.map((v, i) => ({ v, y: ys(v), label: tickLabels[i] })),
       seriesMeta: reduced,
     }
-  }, [w, height, x, series, reducer, yTickCount, yAxis, formatTick, formatValue])
+  }, [w, height, x, series, reducer, yTickCount, yAxis, formatTick, formatValue, ghost])
 
   const grain = useMemo(() => grainFor((x[x.length - 1] ?? 0) - (x[0] ?? 0)), [x])
 
@@ -131,10 +165,27 @@ export function BarChart({
   }
 
   const rows: TooltipRow[] = model && hover != null
-    ? model.seriesMeta.map((s) => {
-        const v = s.points[hover]
-        return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'rect' as const }
-      })
+    ? [
+        ...model.seriesMeta.map((s) => {
+          const v = s.points[hover]
+          return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'rect' as const }
+        }),
+        {
+          color: 'transparent',
+          label: 'Total',
+          value: formatValue(model.seriesMeta.reduce((acc, s) => acc + Math.max(0, s.points[hover] ?? 0), 0)),
+          emphasis: true,
+        },
+        ...(ghost && model.ghostPoints
+          ? [{
+              color: 'var(--viz-other)',
+              label: ghost.label,
+              value: formatValue(model.ghostPoints[hover] ?? 0),
+              swatch: 'rect' as const,
+              emphasis: true,
+            }]
+          : []),
+      ]
     : []
 
   const bucketNote = model && model.stride > 1
@@ -184,6 +235,20 @@ export function BarChart({
                 height={model.baseline - PAD.top}
                 className="viz-band-hover"
               />
+            ) : null}
+
+            {ghost ? (
+              <g aria-hidden="true">
+                {model.columns.map((col, i) =>
+                  col.ghost <= 0.5 ? null : (
+                    <path
+                      key={`g${i}`}
+                      d={barPath(model.left + col.x, model.baseline - col.ghost, model.band.width, col.ghost, model.radius)}
+                      className="viz-ghost-bar"
+                    />
+                  ),
+                )}
+              </g>
             ) : null}
 
             <g>

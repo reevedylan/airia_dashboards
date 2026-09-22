@@ -7,6 +7,8 @@ export interface TooltipRow {
   value: string
   /** Renders a rect key instead of a line key (bars, areas, arcs). */
   swatch?: 'line' | 'rect'
+  /** A summary row — a total, or a reference figure. Set off above the rest. */
+  emphasis?: boolean
 }
 
 export interface TooltipProps {
@@ -44,10 +46,16 @@ export function Tooltip({ x, y, width, height, title, rows, footer }: TooltipPro
       <div className="viz-tooltip__title">{title}</div>
       <div className="viz-tooltip__rows">
         {rows.map((row, i) => (
-          <div className="viz-tooltip__row" key={`${row.label}-${i}`}>
+          <div
+            className={row.emphasis ? 'viz-tooltip__row viz-tooltip__row--total' : 'viz-tooltip__row'}
+            key={`${row.label}-${i}`}
+          >
             <span
-              className={row.swatch === 'rect' ? 'viz-key viz-key--rect' : 'viz-key viz-key--line'}
-              style={{ background: row.color }}
+              className={
+                row.color === 'transparent' ? 'viz-key viz-key--none'
+                  : row.swatch === 'rect' ? 'viz-key viz-key--rect' : 'viz-key viz-key--line'
+              }
+              style={row.color === 'transparent' ? undefined : { background: row.color }}
               aria-hidden="true"
             />
             <span className="viz-tooltip__label">{row.label}</span>

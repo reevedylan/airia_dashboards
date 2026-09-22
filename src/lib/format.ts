@@ -21,6 +21,18 @@ export const seconds = (n: number, digits = 3): string => `${n.toFixed(digits)} 
 
 export const percent = (fraction: number, digits = 1): string => `${(fraction * 100).toFixed(digits)}%`
 
+/**
+ * A share, floored so a present-but-tiny slice never reads as exactly zero.
+ * The long tail of a ranked list is full of 0.04% entries, and "0.0%" says
+ * they contributed nothing.
+ */
+export const share = (fraction: number | null | undefined, digits = 1): string => {
+  if (fraction == null || !Number.isFinite(fraction)) return '—'
+  const floor = 1 / 10 ** (digits + 2)
+  if (fraction > 0 && fraction < floor) return `<${percent(floor, digits)}`
+  return percent(fraction, digits)
+}
+
 /* ---------------------------------------------------------------- dates -- */
 
 /** How wide a span is, which drives tick density and label shape. */

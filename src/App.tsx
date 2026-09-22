@@ -5,8 +5,8 @@ import {
   type RangeKey,
 } from './components'
 import { series } from './theme/palette'
-import { bucketFormat, compact, currency, full } from './lib/format'
-import { useAiria, summarise, runningTotal } from './data/airia'
+import { bucketFormat, compact, currency, full, share } from './lib/format'
+import { useAiria, summarise, runningTotal, modelRows, breakdownFor } from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
@@ -32,9 +32,12 @@ const C = {
 
 export default function App() {
   const [range, setRange] = useState<RangeKey>('3M')
-  const [active, setActive] = useState<string | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
   const [tokenView, setTokenView] = useState<ChartView>('daily')
   const [spendView, setSpendView] = useState<ChartView>('daily')
+  /** One model isolated across BOTH charts — the Models table is the single
+   *  filter source, so isolating never applies to one chart alone. */
+  const [isolated, setIsolated] = useState<string | null>(null)
   const [theme, setTheme] = useTheme()
   const load = useAiria()
 
@@ -42,6 +45,16 @@ export default function App() {
      selecting a range is a lookup rather than a slice-and-downsample. */
   const block = load.status === 'ready' ? load.data.ranges[range] : null
   const slice = useMemo(() => (block ? summarise(block) : null), [block])
+  const models = useMemo(() => (block ? modelRows(block) : []), [block])
+
+  /* A model with traffic in 3M may have none in 24H, so an isolation that no
+     longer matches anything is dropped rather than showing an empty chart. */
+  const active = isolated && models.some((m) => m.model === isolated) ? isolated : null
+  const isolatedRow = active ? models.find((m) => m.model === active) ?? null : null
+  const breakdown = useMemo(
+    () => (block && active ? breakdownFor(block, active) : null),
+    [block, active],
+  )
 
   /* Labels come from the bucket size and the zone the buckets were aligned
      to, not from the chart's total span. */
@@ -80,7 +93,11 @@ export default function App() {
     )
   }
 
-  const { x, tokens, cost, executions, models } = block
+  const { x, executions } = block
+  /* While isolated, the charts stack that model's own categories and the
+     unfiltered whole sits behind as a ghost. */
+  const tokens = breakdown ? breakdown.tokens : block.tokens
+  const cost = breakdown ? breakdown.cost : block.cost
   const { paid, tokenTotals, totals } = slice
   const from = fmtX.tick(x[0])
   const to = fmtX.tick(x[x.length - 1])
@@ -95,6 +112,22 @@ export default function App() {
      so they reset on every range change rather than running all-time. */
   const tokenCumulative = runningTotal(tokenTotals)
   const spendCumulative = runningTotal(paid)
+
+  const allTokenTotals = block.x.map((_, i) =>
+    block.tokens.input[i] + block.tokens.cached[i] + block.tokens.output[i])
+  const allPaid = block.x.map((_, i) =>
+    block.cost.input[i] + block.cost.cached[i] + block.cost.output[i] +
+    block.cost.write[i] + block.cost.other[i])
+
+  const tokenGhost = breakdown ? { label: 'all models', values: allTokenTotals } : undefined
+  const spendGhost = breakdown ? { label: 'all models', values: allPaid } : undefined
+
+  const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
+  const cumNote = `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`
+  const isolationNote = isolatedRow
+    ? `${isolatedRow.model} — ${share(isolatedRow.shareTokens)} of tokens, ` +
+      `${share(isolatedRow.shareSpend)} of spend · grey is all models`
+    : null
 
   const activeBuckets = x.map((_, i) => i).filter((i) => executions[i] > 0)
   const tableStride = Math.max(1, Math.floor(activeBuckets.length / 120))
@@ -126,15 +159,13 @@ export default function App() {
                 { label: 'output', color: C.output, shape: 'rect' },
               ]
             : undefined}
-          activeSeries={active}
-          onSeriesHover={setActive}
+          activeSeries={hovered}
+          onSeriesHover={setHovered}
           footer={
             <>
               <AxisExtent from={from} to={to} />
-              <p className="card-note">
-                {tokenView === 'daily'
-                  ? `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
-                  : `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`}
+              <p className="card-note" data-isolated={isolationNote ? '' : undefined}>
+                {isolationNote ?? (tokenView === 'daily' ? bucketNote : cumNote)}
               </p>
             </>
           }
@@ -162,7 +193,7 @@ export default function App() {
             <BarChart
               x={x}
               reducer="sum"
-              activeSeries={active}
+              activeSeries={hovered}
               height={176}
               formatValue={(n) => full(n)}
               formatX={labelAt}
@@ -172,12 +203,13 @@ export default function App() {
                 { key: 'input', label: 'input', color: C.input, values: tokens.input },
                 { key: 'output', label: 'output', color: C.output, values: tokens.output },
               ]}
+              ghost={tokenGhost}
             />
           ) : (
             <LineChart
               x={x}
               height={176}
-              activeSeries={active}
+              activeSeries={hovered}
               formatValue={(n) => full(Math.round(n))}
               formatX={labelAt}
               formatTick={compact}
@@ -205,15 +237,13 @@ export default function App() {
                 { label: 'other', color: C.other, shape: 'rect' },
               ]
             : undefined}
-          activeSeries={active}
-          onSeriesHover={setActive}
+          activeSeries={hovered}
+          onSeriesHover={setHovered}
           footer={
             <>
               <AxisExtent from={from} to={to} />
-              <p className="card-note">
-                {spendView === 'daily'
-                  ? `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
-                  : `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`}
+              <p className="card-note" data-isolated={isolationNote ? '' : undefined}>
+                {isolationNote ?? (spendView === 'daily' ? bucketNote : cumNote)}
               </p>
             </>
           }
@@ -246,7 +276,7 @@ export default function App() {
             <BarChart
               x={x}
               reducer="sum"
-              activeSeries={active}
+              activeSeries={hovered}
               height={176}
               formatValue={(n) => currency(n, 4)}
               formatX={labelAt}
@@ -258,12 +288,13 @@ export default function App() {
                 { key: 'input', label: 'input', color: C.input, values: cost.input },
                 { key: 'other', label: 'other', color: C.other, values: cost.other },
               ]}
+              ghost={spendGhost}
             />
           ) : (
             <LineChart
               x={x}
               height={176}
-              activeSeries={active}
+              activeSeries={hovered}
               formatValue={(n) => currency(n)}
               formatX={labelAt}
               formatTick={(n) => `$${compact(n)}`}
@@ -278,12 +309,21 @@ export default function App() {
         <Card
           className="grid__full"
           title="Models"
+          controls={
+            active ? (
+              <ToolbarButton icon={<ClearIcon />} onClick={() => setIsolated(null)}>
+                Show all models
+              </ToolbarButton>
+            ) : undefined
+          }
           table={{
             columns: [
               { key: 'm', label: 'Model' },
               { key: 'c', label: 'Spend', align: 'right' },
+              { key: 'cs', label: '% spend', align: 'right' },
               { key: 'ti', label: 'Tokens in', align: 'right' },
               { key: 'to', label: 'Tokens out', align: 'right' },
+              { key: 'ts', label: '% tokens', align: 'right' },
               { key: 'i', label: 'Input $/M', align: 'right' },
               { key: 'o', label: 'Output $/M', align: 'right' },
               { key: 'n', label: 'Executions', align: 'right' },
@@ -291,13 +331,22 @@ export default function App() {
             rows: models.map((m) => ({
               m: m.model,
               c: currency(m.spend),
+              cs: share(m.shareSpend),
               ti: full(m.tokensIn),
               to: full(m.tokensOut),
+              ts: share(m.shareTokens),
               i: m.inputRate == null ? '—' : currency(m.inputRate, 2),
               o: m.outputRate == null ? '—' : currency(m.outputRate, 2),
               n: full(m.executions),
             })),
           }}
+          footer={
+            <p className="card-note">
+              {active
+                ? 'Both charts are showing this model only. Click the row again, or "Show all models", to return to the combined view.'
+                : 'Click a model to show it on its own in both charts, with the all-models total behind it.'}
+            </p>
+          }
         >
           <RankTable
             rows={models.map((m) => ({
@@ -305,17 +354,23 @@ export default function App() {
               label: m.model,
               value: m.spend,
               cells: {
+                shareSpend: m.shareSpend,
                 tokensIn: m.tokensIn,
                 tokensOut: m.tokensOut,
+                shareTokens: m.shareTokens,
                 inputRate: m.inputRate,
                 outputRate: m.outputRate,
               },
             }))}
             labelHeading="Model"
             valueHeading="Spend"
+            selectedKey={active}
+            onSelect={setIsolated}
             columns={[
+              { key: 'shareSpend', heading: '% spend', format: (n) => share(n), muted: true },
               { key: 'tokensIn', heading: 'Tokens in', format: compact },
               { key: 'tokensOut', heading: 'Tokens out', format: compact },
+              { key: 'shareTokens', heading: '% tokens', format: (n) => share(n), muted: true },
               { key: 'inputRate', heading: 'in $/M', format: (n) => `$${n.toFixed(2)}` },
               { key: 'outputRate', heading: 'out $/M', format: (n) => `$${n.toFixed(2)}` },
             ]}
@@ -383,6 +438,12 @@ function EmptyState({ state }: { state: { status: string; message?: string } }) 
     </div>
   )
 }
+
+const ClearIcon = () => (
+  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+    <path d="M4 4l8 8M12 4l-8 8" />
+  </svg>
+)
 
 const ThemeIcon = () => (
   <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
