@@ -65,9 +65,6 @@ midnight. The `x` array is therefore shipped rather than derived: locally
 aligned buckets are not a strict arithmetic grid across a DST change, and a
 transition day's bucket is genuinely 23 or 25 hours long.
 
-`Custom` in the range bar is a placeholder control from the reference design
-with no block of its own; `dataRangeFor()` maps it to `3M`.
-
 ## Labelling a bucket
 
 `bucketFormat(bucketMs, zone)` in `src/lib/format.ts` produces every x label.

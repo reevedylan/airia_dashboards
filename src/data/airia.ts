@@ -56,17 +56,10 @@ export interface RangeBlock {
   models: ModelRow[]
 }
 
-/** Ranges the ingest produces. `Custom` is a placeholder control with no
- *  block of its own, so it falls back to the widest range. */
-export type DataRangeKey = '24H' | '7D' | '14D' | '1M' | '3M'
-
 export interface AiriaData {
   meta: AiriaMeta
-  ranges: Record<DataRangeKey, RangeBlock>
+  ranges: Record<RangeKey, RangeBlock>
 }
-
-export const dataRangeFor = (range: RangeKey): DataRangeKey =>
-  (range === 'Custom' ? '3M' : range) as DataRangeKey
 
 export type LoadState =
   | { status: 'loading' }

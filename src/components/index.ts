@@ -15,7 +15,7 @@ export { TableView } from './primitives/TableView'
 export type { TableColumn, TableViewProps } from './primitives/TableView'
 export { StatTile } from './primitives/StatTile'
 export type { StatTileProps } from './primitives/StatTile'
-export { TimeRangeBar, ToolbarButton, FilterIcon, SavedIcon, RANGES } from './primitives/TimeRangeBar'
+export { TimeRangeBar, ToolbarButton, RANGES } from './primitives/TimeRangeBar'
 export type { RangeKey, TimeRangeBarProps } from './primitives/TimeRangeBar'
 
 export { LineChart } from './charts/LineChart'

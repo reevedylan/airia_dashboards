@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import {
   Card, AxisExtent, LineChart, BarChart, RankTable, StatTile,
-  TimeRangeBar, ToolbarButton, FilterIcon, SavedIcon,
+  TimeRangeBar, ToolbarButton,
   type RangeKey,
 } from './components'
 import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full } from './lib/format'
-import { useAiria, summarise, runningTotal, dataRangeFor } from './data/airia'
+import { useAiria, summarise, runningTotal } from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
@@ -40,7 +40,7 @@ export default function App() {
 
   /* The ingest already bucketed each range to its own bar size and count, so
      selecting a range is a lookup rather than a slice-and-downsample. */
-  const block = load.status === 'ready' ? load.data.ranges[dataRangeFor(range)] : null
+  const block = load.status === 'ready' ? load.data.ranges[range] : null
   const slice = useMemo(() => (block ? summarise(block) : null), [block])
 
   /* Labels come from the bucket size and the zone the buckets were aligned
@@ -63,13 +63,9 @@ export default function App() {
       value={range}
       onChange={setRange}
       actions={
-        <>
-          <ToolbarButton icon={<FilterIcon />}>Show Filters</ToolbarButton>
-          <ToolbarButton icon={<SavedIcon />}>Saved Filters</ToolbarButton>
-          <ToolbarButton icon={<ThemeIcon />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </ToolbarButton>
-        </>
+        <ToolbarButton icon={<ThemeIcon />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+          {theme === 'dark' ? 'Light' : 'Dark'}
+        </ToolbarButton>
       }
     />
   )
