@@ -8,6 +8,8 @@ export interface CardProps {
   value?: string
   /** Sub-label under the value, e.g. a unit or comparison. */
   valueSuffix?: string
+  /** Extra controls in the header, left of the legend — e.g. a view toggle. */
+  controls?: ReactNode
   legend?: readonly LegendItem[]
   activeSeries?: string | null
   onSeriesHover?: (label: string | null) => void
@@ -27,7 +29,7 @@ export interface CardProps {
  * band is never cropped into a nested scrollbar.
  */
 export function Card({
-  title, value, valueSuffix, legend, activeSeries, onSeriesHover,
+  title, value, valueSuffix, controls, legend, activeSeries, onSeriesHover,
   table, footer, loading, className, children,
 }: CardProps) {
   const [showTable, setShowTable] = useState(false)
@@ -37,6 +39,7 @@ export function Card({
       <header className="viz-card__head">
         <h2 className="viz-card__title">{title}</h2>
         <div className="viz-card__tools">
+          {controls}
           {legend ? <Legend items={legend} active={activeSeries} onHover={onSeriesHover} /> : null}
           {table ? (
             <button

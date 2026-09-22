@@ -37,6 +37,25 @@ dark. Components reference them via `src/theme/palette.ts` (`series(1)` →
   It measures lightness band, chroma floor, CVD separation, normal-vision
   separation and contrast in both modes, and exits non-zero on failure.
 
+## Cumulative views
+
+Both charts switch between daily bars and a cumulative line. Two rules:
+
+- **Cumulative is always within the selected window.** `runningTotal()` runs
+  over the already-sliced arrays, so it starts at zero and resets on every
+  range change. Never accumulate across the whole ingest.
+- **A running total must be reduced with `max`, never `sum`.** Merging buckets
+  for display would otherwise add closing balances together. It is monotonic,
+  so the largest value in a merged bucket is its closing value.
+
+`pacedProjection()` draws the window's average rate from zero to the window
+end, dashed. Because the windows are trailing, the data reaches the window end
+and this lands on the actual total — so it reads as a constant-pace reference
+rather than a forecast. Both curves finish at the same value, which means the
+solid line running *below* the dashes indicates the total accrued late (recent
+pace above average), and above means front-loaded. Getting that direction
+backwards in the card copy is easy; it was wrong once already.
+
 ## Chart data contract
 
 Charts take parallel arrays aligned **by index**:
@@ -68,10 +87,10 @@ Two related traps, learned the hard way on this dataset:
 - **A ratio over a tiny denominator is noise, not a rate.** A 0% cache rate
   derived from an 8-token probe plots identically to a sustained cache miss.
   Floor the denominator and emit `null` below it, and say so on the card.
-- **Prefer the dollar form of a ratio.** A cache-hit rate pinned near 100%
-  conveys almost nothing; the same fact as "saved $X versus no caching" moves
-  meaningfully and is actionable. That is why the dashboard shows savings
-  rather than hit rate.
+- **Prefer the form of a metric that moves.** A cache-hit rate pinned near
+  100% conveys almost nothing. Where a ratio is flat, the same fact expressed
+  in dollars, or as a cumulative total against its own average pace, carries
+  far more.
 
 `reducer` lives per-series on `LineChart` but is a chart-level prop on
 `BarChart` (stacked bars share an axis, so mixing reducers within one would be

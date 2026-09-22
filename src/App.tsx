@@ -5,8 +5,8 @@ import {
   type RangeKey,
 } from './components'
 import { series, other as otherColor } from './theme/palette'
-import { axisDate, compact, currency, full, grainFor, percent, stamp } from './lib/format'
-import { useAiria, sliceRange } from './data/airia'
+import { axisDate, compact, currency, full, grainFor, stamp } from './lib/format'
+import { useAiria, sliceRange, runningTotal, pacedProjection } from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
@@ -19,21 +19,25 @@ import { useTheme } from './lib/theme'
  * the default palette seats yellow next to orange, which is the one adjacent
  * pair that fails the colourblind gate, so these orders skip slot 4.
  */
+type ChartView = 'daily' | 'cumulative'
+
 const C = {
   cached: series(1),   // blue   — dominates both charts, sits at the base
   input: series(3),    // aqua
   output: series(2),   // orange
   write: series(7),    // violet
   other: series(5),    // magenta
-  paid: series(1),
-  // The no-cache line is a hypothetical reference, not a measured series, so
-  // it takes the de-emphasis grey rather than a categorical slot.
-  counterfactual: otherColor,
+  total: series(1),
+  // The pace line is derived, not measured, so it recedes to the
+  // de-emphasis grey rather than taking a categorical slot.
+  pace: otherColor,
 } as const
 
 export default function App() {
   const [range, setRange] = useState<RangeKey>('3M')
   const [active, setActive] = useState<string | null>(null)
+  const [tokenView, setTokenView] = useState<ChartView>('daily')
+  const [spendView, setSpendView] = useState<ChartView>('daily')
   const [theme, setTheme] = useTheme()
   const load = useAiria()
 
@@ -75,7 +79,7 @@ export default function App() {
 
   // balanceUsed is deliberately not shown: it does not apply to gateway
   // traffic, which bills against the caller's own provider credentials.
-  const { x, tokens, cost, executions, models, paid, withoutCache, totals } = slice
+  const { x, tokens, cost, executions, models, paid, totals } = slice
   const from = axisDate(x[0], grain)
   const to = axisDate(x[x.length - 1], grain)
   const rowStamp = (i: number) => stamp(x[i], load.data.meta.bucketMs < 86_400_000)
@@ -85,6 +89,14 @@ export default function App() {
      execution, so a flat stride lands almost entirely on empty ones and the
      table reads as a column of zeros. Sample the ACTIVE buckets instead, so
      the twin actually carries the values the chart is showing. */
+  /* Cumulative views accumulate from zero at the start of the SELECTED window,
+     so they reset on every range change rather than running all-time. */
+  const tokenTotals = x.map((_, i) => tokens.input[i] + tokens.cached[i] + tokens.output[i])
+  const tokenCumulative = runningTotal(tokenTotals)
+  const tokenPace = pacedProjection(tokenTotals)
+  const spendCumulative = runningTotal(paid)
+  const spendPace = pacedProjection(paid)
+
   const activeBuckets = x.map((_, i) => i).filter((i) => executions[i] > 0)
   const tableStride = Math.max(1, Math.floor(activeBuckets.length / 120))
   const rows = <T,>(fmt: (i: number) => T) =>
@@ -99,15 +111,6 @@ export default function App() {
       <div className="strip">
         <StatTile label="Token spend" value={currency(totals.cost)} />
         <StatTile label="Tokens" value={compact(totals.tokens)} />
-        <StatTile
-          label="Saved by caching"
-          value={currency(totals.saved)}
-          delta={totals.withoutCache === 0 ? undefined : {
-            text: `${percent(totals.saved / totals.withoutCache, 0)} off`,
-            good: true,
-            vs: 'vs no caching',
-          }}
-        />
         <StatTile label="Executions" value={full(totals.executions)} />
       </div>
 
@@ -116,159 +119,199 @@ export default function App() {
           className="grid__wide"
           title="Tokens"
           value={compact(totals.tokens)}
-          legend={[
-            { label: 'cached input', color: C.cached, shape: 'rect' },
-            { label: 'input', color: C.input, shape: 'rect' },
-            { label: 'output', color: C.output, shape: 'rect' },
-          ]}
+          controls={<ViewToggle value={tokenView} onChange={setTokenView} />}
+          legend={tokenView === 'daily'
+            ? [
+                { label: 'cached input', color: C.cached, shape: 'rect' },
+                { label: 'input', color: C.input, shape: 'rect' },
+                { label: 'output', color: C.output, shape: 'rect' },
+              ]
+            : [
+                { label: 'cumulative', color: C.total, shape: 'line' },
+                { label: `at current pace — ${compact(tokenPace[tokenPace.length - 1] ?? 0)}`, color: C.pace, shape: 'line' },
+              ]}
           activeSeries={active}
           onSeriesHover={setActive}
-          footer={<AxisExtent from={from} to={to} />}
-          table={{
-            columns: [
-              { key: 't', label: 'Time' },
-              { key: 'c', label: 'Cached input', align: 'right' },
-              { key: 'i', label: 'Input', align: 'right' },
-              { key: 'o', label: 'Output', align: 'right' },
-            ],
-            rows: rows((i) => ({
-              t: rowStamp(i), c: full(tokens.cached[i]), i: full(tokens.input[i]), o: full(tokens.output[i]),
-            })),
-          }}
+          footer={
+            <>
+              <AxisExtent from={from} to={to} />
+              {tokenView === 'cumulative' ? (
+                <p className="card-note">
+                  Running total from zero at the start of the selected window. The dashed
+                  line is the window's average rate. Both finish at the same total, so
+                  where the solid line runs <em>below</em> the dashes the total accrued
+                  late — recent usage is outpacing the window average.
+                </p>
+              ) : null}
+            </>
+          }
+          table={tokenView === 'daily'
+            ? {
+                columns: [
+                  { key: 't', label: 'Time' },
+                  { key: 'c', label: 'Cached input', align: 'right' },
+                  { key: 'i', label: 'Input', align: 'right' },
+                  { key: 'o', label: 'Output', align: 'right' },
+                ],
+                rows: rows((i) => ({
+                  t: rowStamp(i), c: full(tokens.cached[i]), i: full(tokens.input[i]), o: full(tokens.output[i]),
+                })),
+              }
+            : {
+                columns: [
+                  { key: 't', label: 'Time' },
+                  { key: 'c', label: 'Cumulative tokens', align: 'right' },
+                  { key: 'p', label: 'At current pace', align: 'right' },
+                ],
+                rows: rows((i) => ({
+                  t: rowStamp(i), c: full(tokenCumulative[i]), p: full(Math.round(tokenPace[i])),
+                })),
+              }}
         >
-          <BarChart
-            x={x}
-            reducer="sum"
-            activeSeries={active}
-            height={176}
-            formatValue={(n) => full(n)}
-            formatTick={compact}
-            series={[
-              { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
-              { key: 'input', label: 'input', color: C.input, values: tokens.input },
-              { key: 'output', label: 'output', color: C.output, values: tokens.output },
-            ]}
-          />
+          {tokenView === 'daily' ? (
+            <BarChart
+              x={x}
+              reducer="sum"
+              activeSeries={active}
+              height={176}
+              formatValue={(n) => full(n)}
+              formatTick={compact}
+              series={[
+                { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
+                { key: 'input', label: 'input', color: C.input, values: tokens.input },
+                { key: 'output', label: 'output', color: C.output, values: tokens.output },
+              ]}
+            />
+          ) : (
+            <LineChart
+              x={x}
+              height={176}
+              activeSeries={active}
+              formatValue={(n) => full(Math.round(n))}
+              formatTick={compact}
+              series={[
+                // 'max' not 'sum': a running total must not be re-summed when
+                // buckets are merged for display. It is monotonic, so the
+                // largest value in a bucket is its closing value.
+                { key: 'pace', label: 'at current pace', color: C.pace, values: tokenPace, reducer: 'max', dashed: true },
+                { key: 'total', label: 'cumulative', color: C.total, values: tokenCumulative, reducer: 'max', area: true },
+              ]}
+            />
+          )}
         </Card>
 
         <Card
           className="grid__wide"
           title="Token spend"
           value={currency(totals.cost)}
-          legend={[
-            { label: 'write cache', color: C.write, shape: 'rect' },
-            { label: 'cached input', color: C.cached, shape: 'rect' },
-            { label: 'output', color: C.output, shape: 'rect' },
-            { label: 'input', color: C.input, shape: 'rect' },
-            { label: 'other', color: C.other, shape: 'rect' },
-          ]}
-          activeSeries={active}
-          onSeriesHover={setActive}
-          footer={<AxisExtent from={from} to={to} />}
-          table={{
-            columns: [
-              { key: 't', label: 'Time' },
-              { key: 'w', label: 'Write cache', align: 'right' },
-              { key: 'c', label: 'Cached', align: 'right' },
-              { key: 'o', label: 'Output', align: 'right' },
-              { key: 'i', label: 'Input', align: 'right' },
-              { key: 'x', label: 'Other', align: 'right' },
-            ],
-            rows: rows((i) => ({
-              t: rowStamp(i),
-              w: currency(cost.write[i], 4), c: currency(cost.cached[i], 4),
-              o: currency(cost.output[i], 4), i: currency(cost.input[i], 4),
-              x: currency(cost.other[i], 4),
-            })),
-          }}
-        >
-          <BarChart
-            x={x}
-            reducer="sum"
-            activeSeries={active}
-            height={176}
-            formatValue={(n) => currency(n, 4)}
-            formatTick={(n) => `$${compact(n)}`}
-            series={[
-              { key: 'write', label: 'write cache', color: C.write, values: cost.write },
-              { key: 'cached', label: 'cached input', color: C.cached, values: cost.cached },
-              { key: 'output', label: 'output', color: C.output, values: cost.output },
-              { key: 'input', label: 'input', color: C.input, values: cost.input },
-              { key: 'other', label: 'other', color: C.other, values: cost.other },
-            ]}
-          />
-        </Card>
-
-        <Card
-          className="grid__wide"
-          title="Cache savings"
-          value={currency(totals.saved)}
-          legend={[
-            { label: 'without caching', color: C.counterfactual, shape: 'line' },
-            { label: 'paid', color: C.paid, shape: 'line' },
-          ]}
+          controls={<ViewToggle value={spendView} onChange={setSpendView} />}
+          legend={spendView === 'daily'
+            ? [
+                { label: 'write cache', color: C.write, shape: 'rect' },
+                { label: 'cached input', color: C.cached, shape: 'rect' },
+                { label: 'output', color: C.output, shape: 'rect' },
+                { label: 'input', color: C.input, shape: 'rect' },
+                { label: 'other', color: C.other, shape: 'rect' },
+              ]
+            : [
+                { label: 'cumulative', color: C.total, shape: 'line' },
+                { label: `at current pace — ${currency(spendPace[spendPace.length - 1] ?? 0)}`, color: C.pace, shape: 'line' },
+              ]}
           activeSeries={active}
           onSeriesHover={setActive}
           footer={
             <>
               <AxisExtent from={from} to={to} />
-              <p className="card-note">
-                Cached input bills at a tenth of the input rate, so the grey line
-                rebills those tokens at full price and drops the write-cache charges
-                you would not have paid. Where grey dips below blue, writing the cache
-                cost more than reading it saved.
-                {totals.cacheHitRate == null ? '' : ` ${percent(totals.cacheHitRate)} of input tokens came from cache.`}
-              </p>
+              {spendView === 'cumulative' ? (
+                <p className="card-note">
+                  Running total from zero at the start of the selected window. The dashed
+                  line is the window's average rate. Both finish at the same total, so
+                  where the solid line runs <em>below</em> the dashes the spend accrued
+                  late — the recent pace is above the window average.
+                </p>
+              ) : null}
             </>
           }
-          table={{
-            columns: [
-              { key: 't', label: 'Time' },
-              { key: 'p', label: 'Paid', align: 'right' },
-              { key: 'w', label: 'Without caching', align: 'right' },
-              { key: 's', label: 'Saved', align: 'right' },
-            ],
-            rows: rows((i) => ({
-              t: rowStamp(i),
-              p: currency(paid[i], 4),
-              w: currency(withoutCache[i], 4),
-              s: currency(withoutCache[i] - paid[i], 4),
-            })),
-          }}
+          table={spendView === 'daily'
+            ? {
+                columns: [
+                  { key: 't', label: 'Time' },
+                  { key: 'w', label: 'Write cache', align: 'right' },
+                  { key: 'c', label: 'Cached', align: 'right' },
+                  { key: 'o', label: 'Output', align: 'right' },
+                  { key: 'i', label: 'Input', align: 'right' },
+                  { key: 'x', label: 'Other', align: 'right' },
+                ],
+                rows: rows((i) => ({
+                  t: rowStamp(i),
+                  w: currency(cost.write[i], 4), c: currency(cost.cached[i], 4),
+                  o: currency(cost.output[i], 4), i: currency(cost.input[i], 4),
+                  x: currency(cost.other[i], 4),
+                })),
+              }
+            : {
+                columns: [
+                  { key: 't', label: 'Time' },
+                  { key: 'c', label: 'Cumulative spend', align: 'right' },
+                  { key: 'p', label: 'At current pace', align: 'right' },
+                ],
+                rows: rows((i) => ({
+                  t: rowStamp(i), c: currency(spendCumulative[i]), p: currency(spendPace[i]),
+                })),
+              }}
         >
-          <LineChart
-            x={x}
-            height={176}
-            activeSeries={active}
-            formatValue={(n) => currency(n, 4)}
-            formatTick={(n) => `$${compact(n)}`}
-            series={[
-              { key: 'without', label: 'without caching', color: C.counterfactual, values: withoutCache, reducer: 'sum' },
-              { key: 'paid', label: 'paid', color: C.paid, values: paid, reducer: 'sum' },
-            ]}
-          />
+          {spendView === 'daily' ? (
+            <BarChart
+              x={x}
+              reducer="sum"
+              activeSeries={active}
+              height={176}
+              formatValue={(n) => currency(n, 4)}
+              formatTick={(n) => `$${compact(n)}`}
+              series={[
+                { key: 'write', label: 'write cache', color: C.write, values: cost.write },
+                { key: 'cached', label: 'cached input', color: C.cached, values: cost.cached },
+                { key: 'output', label: 'output', color: C.output, values: cost.output },
+                { key: 'input', label: 'input', color: C.input, values: cost.input },
+                { key: 'other', label: 'other', color: C.other, values: cost.other },
+              ]}
+            />
+          ) : (
+            <LineChart
+              x={x}
+              height={176}
+              activeSeries={active}
+              formatValue={(n) => currency(n)}
+              formatTick={(n) => `$${compact(n)}`}
+              series={[
+                { key: 'pace', label: 'at current pace', color: C.pace, values: spendPace, reducer: 'max', dashed: true },
+                { key: 'total', label: 'cumulative', color: C.total, values: spendCumulative, reducer: 'max', area: true },
+              ]}
+            />
+          )}
         </Card>
 
+
         <Card
-          className="grid__wide"
+          className="grid__full"
           title="Models"
           table={{
             columns: [
               { key: 'm', label: 'Model' },
               { key: 'c', label: 'Spend', align: 'right' },
-              { key: 't', label: 'Tokens', align: 'right' },
+              { key: 'ti', label: 'Tokens in', align: 'right' },
+              { key: 'to', label: 'Tokens out', align: 'right' },
               { key: 'i', label: 'Input $/M', align: 'right' },
               { key: 'o', label: 'Output $/M', align: 'right' },
-              { key: 'k', label: 'Cached', align: 'right' },
               { key: 'n', label: 'Executions', align: 'right' },
             ],
             rows: models.map((m) => ({
               m: m.model,
               c: currency(m.spend),
-              t: full(m.tokens),
+              ti: full(m.tokensIn),
+              to: full(m.tokensOut),
               i: m.inputRate == null ? '—' : currency(m.inputRate, 2),
               o: m.outputRate == null ? '—' : currency(m.outputRate, 2),
-              k: m.cacheShare == null ? '—' : percent(m.cacheShare, 1),
               n: full(m.executions),
             })),
           }}
@@ -279,19 +322,19 @@ export default function App() {
               label: m.model,
               value: m.spend,
               cells: {
-                tokens: m.tokens,
+                tokensIn: m.tokensIn,
+                tokensOut: m.tokensOut,
                 inputRate: m.inputRate,
                 outputRate: m.outputRate,
-                cacheShare: m.cacheShare,
               },
             }))}
             labelHeading="Model"
             valueHeading="Spend"
             columns={[
-              { key: 'tokens', heading: 'Tokens', format: compact },
+              { key: 'tokensIn', heading: 'Tokens in', format: compact },
+              { key: 'tokensOut', heading: 'Tokens out', format: compact },
               { key: 'inputRate', heading: 'in $/M', format: (n) => `$${n.toFixed(2)}` },
               { key: 'outputRate', heading: 'out $/M', format: (n) => `$${n.toFixed(2)}` },
-              { key: 'cacheShare', heading: 'cached', format: (n) => percent(n, 0), muted: true },
             ]}
             limit={6}
             formatValue={(n) => currency(n)}
@@ -309,6 +352,19 @@ export default function App() {
       </p>
 
       <PaletteSheet />
+    </div>
+  )
+}
+
+/** Daily / Cumulative switch, shown in a chart card's header. */
+function ViewToggle({ value, onChange }: { value: ChartView; onChange: (v: ChartView) => void }) {
+  return (
+    <div className="viz-viewtoggle" role="group" aria-label="Chart view">
+      {(['daily', 'cumulative'] as const).map((v) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}>
+          {v === 'daily' ? 'Daily' : 'Cumulative'}
+        </button>
+      ))}
     </div>
   )
 }

@@ -95,8 +95,6 @@ export interface RangeSlice {
   models: ModelRow[]
   /** What this traffic actually cost, per bucket. */
   paid: number[]
-  /** What the same traffic would have cost with no caching at all. */
-  withoutCache: number[]
   totals: {
     tokens: number
     tokensInput: number
@@ -108,15 +106,15 @@ export interface RangeSlice {
     executions: number
     cacheHitRate: number | null
     paid: number
-    withoutCache: number
-    saved: number
   }
 }
 
 export interface ModelRow {
   model: string
   spend: number
-  tokens: number
+  /** Input + cached input. Both are prompt-side tokens the caller sent. */
+  tokensIn: number
+  tokensOut: number
   executions: number
   /** The model's actual unit price, derived from its own cost/count per
    *  category. Stable per model, and the honest basis for comparing two. */
@@ -128,11 +126,34 @@ export interface ModelRow {
 const sum = (a: readonly number[]) => a.reduce((p, c) => p + c, 0)
 
 /**
- * Cached input is billed at exactly one tenth of the input rate, so the same
- * tokens read uncached would have cost ten times what was paid — and without
- * caching there would be no write-cache charge at all.
+ * Running total across the slice. Starts at zero by construction, so it is
+ * always "cumulative within the selected window" and resets whenever the
+ * range changes — never all-time.
  */
-const CACHE_READ_DISCOUNT = 10
+export function runningTotal(values: readonly number[]): number[] {
+  let acc = 0
+  return values.map((v) => (acc += v))
+}
+
+/**
+ * Straight line at the average rate observed so far, from zero at the window
+ * start to the window end.
+ *
+ * With a trailing window the data reaches the window end, so this lands on the
+ * actual total and reads as a constant-pace reference. Both curves finish at
+ * the same value, so the real curve running BELOW this line means the total
+ * accrued late (recent pace above average), and above it means front-loaded.
+ * If the data ever stops short of the window end, the dashes carry on past it
+ * as a true projection.
+ */
+export function pacedProjection(values: readonly number[], length = values.length): number[] {
+  const elapsed = values.length
+  if (elapsed === 0) return []
+  const rate = sum(values) / elapsed
+  return Array.from({ length }, (_, i) => rate * (i + 1))
+}
+
+
 
 
 /** Take the trailing `range` worth of buckets. The x axis is a strict
@@ -167,7 +188,8 @@ export function sliceRange(data: AiriaData, range: RangeKey): RangeSlice {
       return {
         model: m.model,
         spend: inC + caC + ouC + pick(m.wrC) + pick(m.otC),
-        tokens: inT + caT + ouT,
+        tokensIn: inT + caT,
+        tokensOut: ouT,
         executions: pick(m.ex),
         // Unit price per category. Never blend these: a blended rate ranks
         // models by cache hit rate rather than by price, which inverts the
@@ -187,11 +209,8 @@ export function sliceRange(data: AiriaData, range: RangeKey): RangeSlice {
 
   const paid = x.map((_, i) =>
     cost.input[i] + cost.cached[i] + cost.output[i] + cost.write[i] + cost.other[i])
-  const withoutCache = x.map((_, i) =>
-    cost.input[i] + cost.cached[i] * CACHE_READ_DISCOUNT + cost.output[i] + cost.other[i])
-
   return {
-    x, tokens, cost, balanceUsed, executions, models, paid, withoutCache,
+    x, tokens, cost, balanceUsed, executions, models, paid,
     totals: {
       tokens: tokensInput + tokensCached + tokensOutput,
       tokensInput, tokensCached, tokensOutput,
@@ -201,8 +220,6 @@ export function sliceRange(data: AiriaData, range: RangeKey): RangeSlice {
       executions: sum(executions),
       cacheHitRate: tokensInput + tokensCached === 0 ? null : tokensCached / (tokensInput + tokensCached),
       paid: sum(paid),
-      withoutCache: sum(withoutCache),
-      saved: sum(withoutCache) - sum(paid),
     },
   }
 }

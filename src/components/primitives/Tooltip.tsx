@@ -20,7 +20,7 @@ export interface TooltipProps {
 }
 
 const OFFSET = 14
-const EST_WIDTH = 210
+const EST_WIDTH = 244
 
 /**
  * Hover readout. Values lead, labels follow — the reader already knows which

@@ -14,6 +14,12 @@ export interface LineSeries {
   values: readonly (number | null)[]
   /** Adds the 10% wash under the line. Sensible for one series, noisy for many. */
   area?: boolean
+  /**
+   * Dash the stroke. Reserved for a series that is not measured — a
+   * projection or a reference pace. Gridlines and axes stay solid; dashing
+   * them reads as "threshold" when it is just a grid.
+   */
+  dashed?: boolean
   /** How samples combine when the series is denser than the pixels available. */
   reducer?: Reducer
   /**
@@ -205,6 +211,7 @@ export function LineChart({
                     strokeWidth="var(--viz-stroke-line)"
                     strokeLinejoin="round"
                     strokeLinecap="round"
+                    strokeDasharray={s.dashed ? '5 4' : undefined}
                   />
                 </g>
               )

@@ -78,13 +78,17 @@
 }
 .viz-card__head {
   display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 16px; min-height: 28px;
+  gap: 12px 16px; min-height: 28px;
+  /* With a view toggle, a five-item legend and the table button all in the
+     header, the tools wrap below the title rather than squeezing it. */
+  flex-wrap: wrap;
 }
 .viz-card__title {
   font: 600 16px/1.3 var(--viz-font);
   color: var(--viz-text-primary); margin: 0; letter-spacing: -0.01em;
+  white-space: nowrap;
 }
-.viz-card__tools { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.viz-card__tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .viz-card__value {
   font: 700 30px/1.15 var(--viz-font);
@@ -309,3 +313,25 @@
   color: var(--viz-text-muted);
   max-width: 62ch;
 }
+
+/* In-card view switch (daily / cumulative). Smaller sibling of .viz-segmented. */
+.viz-viewtoggle {
+  display: inline-flex; gap: 2px; padding: 2px;
+  background: var(--viz-surface-sunken);
+  border-radius: 6px;
+}
+.viz-viewtoggle button {
+  font: 500 11.5px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: none; border: 0; cursor: pointer;
+  padding: 5px 9px; border-radius: 4px;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-viewtoggle button:hover { color: var(--viz-text-primary); }
+.viz-viewtoggle button[aria-pressed='true'] {
+  background: var(--viz-surface);
+  color: var(--viz-text-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.card-note em { font-style: normal; color: var(--viz-text-secondary); font-weight: 600; }

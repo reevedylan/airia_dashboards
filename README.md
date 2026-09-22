@@ -85,17 +85,22 @@ are both gitignored — the aggregates are not PII but they disclose tenant
 spend, and this repo is public. A fresh clone shows an empty state with the
 ingest command.
 
-Cards: **Tokens** (input / cached / output), **Token spend** (those three plus
-write cache and non-token charges), **Cache savings** (what you paid against
-what the same traffic would have cost uncached), and **Models** with spend,
-volume and the per-model rate card.
+Two charts, each switchable between **Daily** (stacked bars by category) and
+**Cumulative** (running total from zero at the window start, with a dashed
+line at the window's average rate carrying the projected total):
 
-Three measurement decisions worth knowing, all documented in `CLAUDE.md`:
+- **Tokens** — cached input / input / output
+- **Token spend** — write cache / cached input / output / input / other
 
-- **Savings, not hit rate.** A cache-hit percentage pinned near 100% conveys
-  little. Cached input bills at exactly a tenth of the input rate, so the same
-  tokens uncached would cost ten times what was paid — and there would be no
-  write-cache charge. That difference is a number that moves.
+Plus a **Models** table: spend, tokens in, tokens out, and the per-model rate
+card.
+
+Tokens and spend stay separate charts on purpose. They are different signals
+and they diverge whenever the usage mix shifts toward pricier models or
+categories — merging them would hide exactly that.
+
+Two measurement decisions worth knowing, documented in `CLAUDE.md`:
+
 - **The rate card is never blended.** `inputCost / inputCount` per model, not
   total cost over total tokens. A blended rate ranks models by cache hit rate
   rather than by price, and inverts the ordering: the cheapest model per token
