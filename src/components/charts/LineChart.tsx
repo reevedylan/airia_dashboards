@@ -57,6 +57,15 @@ export interface LineChartProps {
    */
   formatX?: (t: number) => string
   /**
+   * A faint reference series drawn BEHIND the lines, on the same scale — for
+   * showing the unfiltered whole while the lines show an isolated part.
+   *
+   * It joins the y-domain, so isolating does not rescale the axis and the part
+   * keeps its true size relative to the whole. Not a series: it takes the
+   * de-emphasis grey, carries no legend entry, and is never coloured.
+   */
+  ghost?: { label: string; values: readonly (number | null)[]; reducer?: Reducer }
+  /**
    * Label the gridlines. On by default: without it the only way to read a
    * magnitude is to hover, and the axis is what carries the values no direct
    * label does. Turn it off only where a hero figure already gives the scale.
@@ -74,7 +83,7 @@ const PAD = { top: 10, right: 6, bottom: 4, left: 6 }
 
 export function LineChart({
   x, series, height = 170, activeSeries = null,
-  formatValue = compact, zeroBased = true, yTickCount = 3, yAxis = true, formatTick, formatX, pxPerPoint = 4,
+  formatValue = compact, zeroBased = true, yTickCount = 3, yAxis = true, formatTick, formatX, ghost, pxPerPoint = 4,
 }: LineChartProps) {
   const [ref, size] = useSize<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
@@ -123,8 +132,27 @@ export function LineChart({
       }) as (number | null)[],
     }))
 
+    const ghostPoints = ghost
+      ? buckets.map(([start, end]) => {
+          let sum = 0, max = -Infinity, n = 0
+          for (let i = start; i < end; i++) {
+            const v = ghost.values[i]
+            if (v == null || !Number.isFinite(v)) continue
+            sum += v; if (v > max) max = v; n += 1
+          }
+          if (n === 0) return null
+          const r = ghost.reducer ?? 'sum'
+          return r === 'max' ? max : r === 'mean' ? sum / n : sum
+        })
+      : null
+
     let lo = Infinity, hi = -Infinity
     for (const s of reduced) for (const v of s.points) {
+      if (v == null) continue
+      if (v < lo) lo = v
+      if (v > hi) hi = v
+    }
+    for (const v of ghostPoints ?? []) {
       if (v == null) continue
       if (v < lo) lo = v
       if (v > hi) hi = v
@@ -142,8 +170,13 @@ export function LineChart({
     const xs = linearScale([0, Math.max(1, times.length - 1)], [left, left + plotW])
     const ys = linearScale([y0, y1], [PAD.top + plotH, PAD.top])
 
+    const ghostPts: (Pt | null)[] = (ghostPoints ?? []).map((v, i) => (v == null ? null : { x: xs(i), y: ys(v) }))
+
     return {
       times, plotH, stride, left,
+      ghostPoints,
+      ghostLine: ghostPoints ? linePath(ghostPts) : null,
+      ghostArea: ghostPoints ? areaPath(ghostPts, ys(y0)) : null,
       gridlines: tickValues.map((v, i) => ({ v, y: ys(v), label: tickLabels[i] })),
       baseline: ys(y0),
       lines: reduced.map((s) => {
@@ -152,7 +185,7 @@ export function LineChart({
       }),
       xAt: (i: number) => xs(i),
     }
-  }, [w, height, x, series, zeroBased, yTickCount, yAxis, pxPerPoint, formatTick, formatValue])
+  }, [w, height, x, series, zeroBased, yTickCount, yAxis, pxPerPoint, formatTick, formatValue, ghost])
 
   const grain = useMemo(() => grainFor((x[x.length - 1] ?? 0) - (x[0] ?? 0)), [x])
 
@@ -166,10 +199,21 @@ export function LineChart({
   }
 
   const hoveredRows: TooltipRow[] = model && hover != null
-    ? model.lines.map((s) => {
-        const v = s.points[hover]
-        return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'line' as const }
-      })
+    ? [
+        ...model.lines.map((s) => {
+          const v = s.points[hover]
+          return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'line' as const }
+        }),
+        ...(ghost && model.ghostPoints
+          ? [{
+              color: 'var(--viz-other)',
+              label: ghost.label,
+              value: model.ghostPoints[hover] == null ? '—' : formatValue(model.ghostPoints[hover]!),
+              swatch: 'line' as const,
+              emphasis: true,
+            }]
+          : []),
+      ]
     : []
 
   return (
@@ -204,6 +248,13 @@ export function LineChart({
                   ))
                 : null}
             </g>
+
+            {model.ghostArea ? (
+              <g aria-hidden="true">
+                <path d={model.ghostArea} className="viz-ghost-area" />
+                <path d={model.ghostLine ?? ''} className="viz-ghost-line" fill="none" />
+              </g>
+            ) : null}
 
             {model.lines.map((s) => {
               const dim = activeSeries != null && activeSeries !== s.label

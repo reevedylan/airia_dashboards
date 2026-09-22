@@ -122,10 +122,24 @@ Clicking a row in the Models table shows that model alone in **both** charts —
 the table is the single filter source, so isolation never applies to one chart
 on its own. Three rules:
 
-- **The unfiltered whole stays on screen.** `BarChart`'s `ghost` prop draws it
-  in `--viz-other` behind the stack, and the ghost **joins the y-domain**. Not
-  rescaling is the whole point: the isolated model keeps both its absolute
-  shape and its size relative to the whole.
+- **The unfiltered whole stays on screen, in BOTH views.** `BarChart` and
+  `LineChart` each take a `ghost` prop and draw it in `--viz-other` behind the
+  data — bars behind the stack, a filled area behind the lines. The ghost
+  **joins the y-domain**. Not rescaling is the whole point: the isolated model
+  keeps both its absolute shape and its size relative to the whole.
+
+  The daily ghost compares per-bucket totals; the cumulative ghost compares
+  running totals, so it passes `reducer: 'max'` — a running total must not be
+  re-summed if buckets merge.
+
+- **Everything the card shows must follow the isolation.** The cumulative
+  series was originally derived from `summarise(block)`, which is always
+  all-models, so clicking a model changed the daily bars and left the
+  cumulative line untouched. Derive per-bucket totals from the plotted
+  `tokens`/`cost` (which `breakdownFor()` may have replaced), never from the
+  all-models summary. The card's headline figure follows too — showing the
+  window total above a plot of one model misstates it by that model's share.
+  The KPI strip keeps the all-models totals; the cards describe their plot.
 - **Isolation is dropped when it stops matching.** A model with traffic in 3M
   may have none in 24H, so `active` is derived by checking the isolation
   against the range's own model list rather than trusting the stored value. The

@@ -94,10 +94,12 @@ Two charts, each switchable between **Daily** (stacked bars by category) and
 Plus a **Models** table: spend, tokens in/out, each model's share of the
 window's tokens and spend, and the per-model rate card.
 
-**Click a model to isolate it.** Both charts then show that model alone, still
-broken out by category, with the all-models total behind it in grey on the same
-scale — so its absolute shape and its share of the whole read at once. Click
-again, or "Show all models", to go back.
+**Click a model to isolate it.** Both charts then show that model alone — the
+daily bars still broken out by category, the cumulative line as that model's
+own running total — each with the all-models figure behind it in grey on the
+same scale, so absolute shape and share of the whole read at once. The card
+headlines follow the plot; the KPI tiles keep the window totals. Click again,
+or "Show all models", to go back.
 
 Tokens and spend stay separate charts on purpose. They are different signals
 and they diverge whenever the usage mix shifts toward pricier models or

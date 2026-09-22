@@ -98,7 +98,7 @@ export default function App() {
      unfiltered whole sits behind as a ghost. */
   const tokens = breakdown ? breakdown.tokens : block.tokens
   const cost = breakdown ? breakdown.cost : block.cost
-  const { paid, tokenTotals, totals } = slice
+  const { totals } = slice
   const from = fmtX.tick(x[0])
   const to = fmtX.tick(x[x.length - 1])
   const rowStamp = (i: number) => labelAt(x[i])
@@ -110,17 +110,39 @@ export default function App() {
      the twin actually carries the values the chart is showing. */
   /* Cumulative views accumulate from zero at the start of the SELECTED window,
      so they reset on every range change rather than running all-time. */
-  const tokenCumulative = runningTotal(tokenTotals)
-  const spendCumulative = runningTotal(paid)
+  /* Per-bucket totals of WHAT IS PLOTTED — the isolated model when one is
+     selected, every model otherwise. Deriving the cumulative series from the
+     all-models summary instead meant clicking a model changed the daily bars
+     but left the cumulative line untouched. */
+  const shownTokens = x.map((_, i) => tokens.input[i] + tokens.cached[i] + tokens.output[i])
+  const shownPaid = x.map((_, i) =>
+    cost.input[i] + cost.cached[i] + cost.output[i] + cost.write[i] + cost.other[i])
+  const tokenCumulative = runningTotal(shownTokens)
+  const spendCumulative = runningTotal(shownPaid)
 
-  const allTokenTotals = block.x.map((_, i) =>
+  /* The unfiltered whole, for the grey reference behind an isolated series.
+     Daily compares per-bucket totals; cumulative compares running totals. */
+  const allTokens = block.x.map((_, i) =>
     block.tokens.input[i] + block.tokens.cached[i] + block.tokens.output[i])
   const allPaid = block.x.map((_, i) =>
     block.cost.input[i] + block.cost.cached[i] + block.cost.output[i] +
     block.cost.write[i] + block.cost.other[i])
 
-  const tokenGhost = breakdown ? { label: 'all models', values: allTokenTotals } : undefined
-  const spendGhost = breakdown ? { label: 'all models', values: allPaid } : undefined
+  const ghostOf = (values: number[], cumulative: boolean) =>
+    breakdown
+      ? {
+          label: 'all models',
+          values: cumulative ? runningTotal(values) : values,
+          // A running total must not be re-summed when buckets merge.
+          reducer: (cumulative ? 'max' : 'sum') as 'max' | 'sum',
+        }
+      : undefined
+
+  /* The card's headline figure follows the chart. Showing the window total
+     while the plot shows one model would misstate it by the isolated model's
+     share; the KPI strip above keeps the all-models totals. */
+  const tokenHeadline = breakdown ? shownTokens.reduce((p, c) => p + c, 0) : totals.tokens
+  const spendHeadline = breakdown ? shownPaid.reduce((p, c) => p + c, 0) : totals.cost
 
   const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
   const cumNote = `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`
@@ -150,7 +172,7 @@ export default function App() {
         <Card
           className="grid__wide"
           title="Tokens"
-          value={compact(totals.tokens)}
+          value={compact(tokenHeadline)}
           controls={<ViewToggle value={tokenView} onChange={setTokenView} />}
           legend={tokenView === 'daily'
             ? [
@@ -185,8 +207,13 @@ export default function App() {
                 columns: [
                   { key: 't', label: 'Time' },
                   { key: 'c', label: 'Cumulative tokens', align: 'right' },
+                  ...(breakdown ? [{ key: 'a', label: 'All models', align: 'right' as const }] : []),
                 ],
-                rows: rows((i) => ({ t: rowStamp(i), c: full(tokenCumulative[i]) })),
+                rows: rows((i) => ({
+                  t: rowStamp(i),
+                  c: full(tokenCumulative[i]),
+                  ...(breakdown ? { a: full(runningTotal(allTokens)[i]) } : {}),
+                })),
               }}
         >
           {tokenView === 'daily' ? (
@@ -203,7 +230,7 @@ export default function App() {
                 { key: 'input', label: 'input', color: C.input, values: tokens.input },
                 { key: 'output', label: 'output', color: C.output, values: tokens.output },
               ]}
-              ghost={tokenGhost}
+              ghost={ghostOf(allTokens, false)}
             />
           ) : (
             <LineChart
@@ -219,6 +246,7 @@ export default function App() {
                 // largest value in a bucket is its closing value.
                 { key: 'total', label: 'cumulative', color: C.total, values: tokenCumulative, reducer: 'max', area: true },
               ]}
+              ghost={ghostOf(allTokens, true)}
             />
           )}
         </Card>
@@ -226,7 +254,7 @@ export default function App() {
         <Card
           className="grid__wide"
           title="Token spend"
-          value={currency(totals.cost)}
+          value={currency(spendHeadline)}
           controls={<ViewToggle value={spendView} onChange={setSpendView} />}
           legend={spendView === 'daily'
             ? [
@@ -268,8 +296,13 @@ export default function App() {
                 columns: [
                   { key: 't', label: 'Time' },
                   { key: 'c', label: 'Cumulative spend', align: 'right' },
+                  ...(breakdown ? [{ key: 'a', label: 'All models', align: 'right' as const }] : []),
                 ],
-                rows: rows((i) => ({ t: rowStamp(i), c: currency(spendCumulative[i]) })),
+                rows: rows((i) => ({
+                  t: rowStamp(i),
+                  c: currency(spendCumulative[i]),
+                  ...(breakdown ? { a: currency(runningTotal(allPaid)[i]) } : {}),
+                })),
               }}
         >
           {spendView === 'daily' ? (
@@ -288,7 +321,7 @@ export default function App() {
                 { key: 'input', label: 'input', color: C.input, values: cost.input },
                 { key: 'other', label: 'other', color: C.other, values: cost.other },
               ]}
-              ghost={spendGhost}
+              ghost={ghostOf(allPaid, false)}
             />
           ) : (
             <LineChart
@@ -301,6 +334,7 @@ export default function App() {
               series={[
                 { key: 'total', label: 'cumulative', color: C.total, values: spendCumulative, reducer: 'max', area: true },
               ]}
+              ghost={ghostOf(allPaid, true)}
             />
           )}
         </Card>

@@ -378,3 +378,7 @@
 .viz-rank tr[data-selected] .viz-rank__text { color: var(--viz-text-primary); font-weight: 600; }
 .viz-rank tr[data-selected] :where(th, td):first-child { border-radius: 4px 0 0 4px; }
 .viz-rank tr[data-selected] :where(th, td):last-child { border-radius: 0 4px 4px 0; }
+
+/* Line-chart ghost: the unfiltered whole behind an isolated series. */
+.viz-ghost-area { fill: var(--viz-other); opacity: 0.16; }
+.viz-ghost-line { stroke: var(--viz-other); stroke-width: 1.5; opacity: 0.55; }
