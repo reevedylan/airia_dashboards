@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 /**
- * Fetch Airia AIOperationExecutions and aggregate them into the shape the
- * charts consume.
+ * Fetch Airia AIOperationExecutions and aggregate them into the exact bars
+ * each dashboard range shows.
  *
- *   node scripts/ingest-airia.mjs                      # last 90 days, Gateway
- *   node scripts/ingest-airia.mjs --from 2026-09-01 --to 2026-09-22
- *   node scripts/ingest-airia.mjs --days 7 --bucket 1
+ *   node scripts/ingest-airia.mjs
  *   node scripts/ingest-airia.mjs --source all
  *
  * Reads AIRIA_API_KEY from the environment or from a local .env. The key is
@@ -13,8 +11,12 @@
  *
  * WHY THIS ISN'T IN THE BROWSER: the key would ship to every visitor, and the
  * endpoint silently truncates large windows (see fetchWindow) which needs
- * recursive bisection and hundreds of thousands of rows. The app reads only
- * the bucketed output.
+ * recursive bisection over tens of thousands of rows.
+ *
+ * Each range gets a fixed bucket size and a fixed bar count, so the output is
+ * 414 buckets in total rather than 25,921 five-minute ones the client would
+ * have to downsample. The bar count is then deterministic instead of a
+ * function of how wide the card happens to be.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
@@ -34,11 +36,6 @@ const flag = (name) => argv.includes(`--${name}`)
 
 const BASE = 'https://prodaus.api.airia.ai/api/marketplace/v1/AIOperationExecutions'
 const SOURCE = arg('source', 'Gateway')          // 'Gateway' | 'all'
-const BUCKET_MIN = Number(arg('bucket', 5))
-const BUCKET_MS = BUCKET_MIN * 60_000
-// Served as a static asset (not imported) so 600KB of aggregates stays out of
-// the JS bundle. Gitignored: these are aggregates rather than PII, but they
-// still disclose tenant spend and this repo is public.
 const OUT = resolve(ROOT, arg('out', 'public/data/airia-gateway.json'))
 const CACHE_DIR = resolve(ROOT, '.cache/airia')
 const CONCURRENCY = Number(arg('workers', 8))    // 8 was the observed sweet spot
@@ -47,15 +44,27 @@ const PAGE_LIMIT = 200_000                       // a ceiling, not the real boun
 const MIN_WINDOW_MS = 1000                       // bisection floor
 const REQ_TIMEOUT_MS = 120_000
 
-const to = arg('to') ? Date.parse(arg('to')) : Date.now()
-const from = arg('from')
-  ? Date.parse(arg('from'))
-  : to - Number(arg('days', 90)) * 86_400_000
-
-if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
-  console.error('Bad --from/--to range')
-  process.exit(1)
+/**
+ * Bucket size and bar count per range. Window length is count x bucketMs, so
+ * these also define what each range covers.
+ */
+const RANGE_SPECS = {
+  '24H': { bucketMs: 15 * 60_000, count: 96 },
+  '7D': { bucketMs: 2 * 3_600_000, count: 84 },
+  '14D': { bucketMs: 4 * 3_600_000, count: 84 },
+  '1M': { bucketMs: 12 * 3_600_000, count: 60 },
+  '3M': { bucketMs: 24 * 3_600_000, count: 90 },
 }
+
+/**
+ * Buckets are aligned to LOCAL time, not UTC. The 12-hour buckets have to fall
+ * on midnight and noon Sydney time to read as AM/PM, and daily buckets on
+ * local midnight — UTC alignment would put them at 10am/10pm and split every
+ * Australian day in half.
+ */
+const ZONE = arg('zone', 'Australia/Sydney')
+
+const now = arg('now') ? Date.parse(arg('now')) : Date.now()
 
 /* ------------------------------------------------------------------- key -- */
 
@@ -81,7 +90,7 @@ const API_KEY = loadKey()
  * scaled by 10^12 and converted back once, at the end.
  */
 const SCALE = 12
-export const toScaled = (v) => {
+const toScaled = (v) => {
   const s = String(v ?? '0').trim()
   if (s === '' || s === 'null') return 0n
   const neg = s.startsWith('-')
@@ -91,6 +100,56 @@ export const toScaled = (v) => {
 }
 // 9dp is far finer than any real charge and keeps the JSON compact.
 const fromScaled = (b) => Number((Number(b) / 10 ** SCALE).toFixed(9))
+
+/* -------------------------------------------------------------- timezone -- */
+
+const offsetCache = new Map()
+
+/** Milliseconds ZONE is ahead of UTC at instant `t`. */
+function zoneOffsetMs(t) {
+  const key = Math.floor(t / 3_600_000)
+  const hit = offsetCache.get(key)
+  if (hit !== undefined) return hit
+  const parts = {}
+  for (const p of LOCAL_FMT.formatToParts(new Date(t))) {
+    if (p.type !== 'literal') parts[p.type] = p.value
+  }
+  const asUTC = Date.UTC(
+    +parts.year, +parts.month - 1, +parts.day,
+    +parts.hour % 24, +parts.minute, +parts.second,
+  )
+  const off = asUTC - Math.floor(t / 1000) * 1000
+  offsetCache.set(key, off)
+  return off
+}
+
+const LOCAL_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: ZONE, hour12: false,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+})
+
+/**
+ * Floor `t` to a bucket boundary in local time.
+ *
+ * Two passes: the offset is first taken at `t`, then re-taken at the candidate
+ * boundary. On a daylight-saving night those differ, and a single pass lands
+ * an hour off local midnight.
+ */
+function localFloor(t, size) {
+  const o1 = zoneOffsetMs(t)
+  let b = Math.floor((t + o1) / size) * size - o1
+  const o2 = zoneOffsetMs(b)
+  if (o2 !== o1) b = Math.floor((t + o2) / size) * size - o2
+  return b
+}
+
+/** The `count` bucket starts ending with the one containing `at`, ascending. */
+function buildBoundaries(bucketMs, count, at) {
+  const out = [localFloor(at, bucketMs)]
+  while (out.length < count) out.unshift(localFloor(out[0] - 1, bucketMs))
+  return out
+}
 
 /* ------------------------------------------------------------ http fetch -- */
 
@@ -232,150 +291,136 @@ function splitCharges(additionalCharges) {
 
 /* ------------------------------------------------------------- aggregate -- */
 
+const emptyBucket = () => ({
+  tokIn: 0, tokCached: 0, tokOut: 0,
+  amtIn: 0n, amtCached: 0n, amtOut: 0n, amtWrite: 0n, amtOther: 0n,
+  executions: 0,
+})
+const emptyModel = () => ({
+  inT: 0, caT: 0, ouT: 0,
+  inC: 0n, caC: 0n, ouC: 0n, wrC: 0n, otC: 0n,
+  executions: 0,
+})
+
 function aggregate(rows) {
-  const buckets = new Map()
-  const models = new Map()
-  // Per-model series at hourly resolution. The models table only ever needs
-  // range TOTALS, so an hour is ample — and it keeps the payload at ~4 models
-  // x 2,160 hours rather than x 25,921 five-minute buckets.
-  const HOUR_MS = 3_600_000
-  const modelHours = new Map()
+  // One bucket map and one model map per range.
+  const ranges = Object.fromEntries(Object.entries(RANGE_SPECS).map(([key, spec]) => {
+    const boundaries = buildBoundaries(spec.bucketMs, spec.count, now)
+    return [key, {
+      spec,
+      boundaries,
+      buckets: new Map(boundaries.map((b) => [b, emptyBucket()])),
+      models: new Map(),
+    }]
+  }))
+
   const providers = {}
-  let reconciledAmounts = 0
-  let mismatchedAmounts = 0
+  let reconciled = 0
+  let mismatched = 0
+  let placed = 0
 
   for (const row of rows) {
     const t = Date.parse(row.executionDateTime)   // V8 handles the 7-digit fraction
     if (!Number.isFinite(t)) { warnings.add('unparseable executionDateTime skipped'); continue }
 
-    const key = Math.floor(t / BUCKET_MS) * BUCKET_MS
-    let b = buckets.get(key)
-    if (!b) {
-      b = {
-        tokIn: 0, tokCached: 0, tokOut: 0,
-        amtIn: 0n, amtCached: 0n, amtOut: 0n, amtWrite: 0n, amtOther: 0n,
-        balance: 0n, executions: 0,
-      }
-      buckets.set(key, b)
-    }
-
     const tok = normaliseTokens(row)
     const { write, other } = splitCharges(row.additionalCharges)
-
     const amtIn = toScaled(row.inputTokenAmountConsumed)
     const amtCached = toScaled(row.cachedInputTokenAmountConsumed)
     const amtOut = toScaled(row.outputTokenAmountConsumed)
 
     // Verify the money adds up, per row. This is the contract the whole
     // dashboard rests on, so it is checked rather than assumed.
-    if (amtIn + amtCached + amtOut + write + other === toScaled(row.totalTokenAmountConsumed)) reconciledAmounts++
-    else mismatchedAmounts++
-
-    b.tokIn += tok.input; b.tokCached += tok.cached; b.tokOut += tok.output
-    b.amtIn += amtIn; b.amtCached += amtCached; b.amtOut += amtOut
-    b.amtWrite += write; b.amtOther += other
-    b.balance += toScaled(row.balanceUsed)
-    b.executions++
+    if (amtIn + amtCached + amtOut + write + other === toScaled(row.totalTokenAmountConsumed)) reconciled++
+    else mismatched++
 
     providers[row.providerType ?? '(unknown)'] = (providers[row.providerType ?? '(unknown)'] ?? 0) + 1
-
     const name = row.modelName || '(unspecified)'
-    let m = models.get(name)
-    if (!m) { m = { model: name, cost: 0n, executions: 0 }; models.set(name, m) }
-    const rowCost = amtIn + amtCached + amtOut + write + other
-    m.cost += rowCost
-    m.executions++
+    let counted = false
 
-    // Keep counts and costs split per category. A blended $/M rate ranks
-    // models by how often they hit cache rather than by price — haiku is 5x
-    // cheaper per token than opus but blends higher, because opus caches more.
-    // The rate card (cost/count per category) is the model's actual price.
-    const hourKey = `${name}\u0000${Math.floor(t / HOUR_MS) * HOUR_MS}`
-    let mh = modelHours.get(hourKey)
-    if (!mh) {
-      mh = { inT: 0, caT: 0, ouT: 0, inC: 0n, caC: 0n, ouC: 0n, wrC: 0n, otC: 0n, executions: 0 }
-      modelHours.set(hourKey, mh)
+    for (const r of Object.values(ranges)) {
+      const b = r.buckets.get(localFloor(t, r.spec.bucketMs))
+      if (!b) continue                            // older than this range's window
+      counted = true
+      b.tokIn += tok.input; b.tokCached += tok.cached; b.tokOut += tok.output
+      b.amtIn += amtIn; b.amtCached += amtCached; b.amtOut += amtOut
+      b.amtWrite += write; b.amtOther += other
+      b.executions++
+
+      let m = r.models.get(name)
+      if (!m) { m = emptyModel(); r.models.set(name, m) }
+      m.inT += tok.input; m.caT += tok.cached; m.ouT += tok.output
+      m.inC += amtIn; m.caC += amtCached; m.ouC += amtOut
+      m.wrC += write; m.otC += other
+      m.executions++
     }
-    mh.inT += tok.input; mh.caT += tok.cached; mh.ouT += tok.output
-    mh.inC += amtIn; mh.caC += amtCached; mh.ouC += amtOut
-    mh.wrC += write; mh.otC += other
-    mh.executions++
+    if (counted) placed++
   }
 
-  /**
-   * Emit a DENSE grid: one entry per bucket across the whole range, including
-   * the empty ones. Only writing buckets that contain rows produces an
-   * unevenly-spaced series, and the charts assume index i maps to a fixed
-   * time step — a 62-hour quiet spell would otherwise render as two adjacent
-   * bars and misstate when the spend happened.
-   *
-   * The x axis is a strict arithmetic grid, so it is described by
-   * (from0, bucketMs, bucketCount) rather than shipped as an array it could
-   * drift out of sync with.
-   */
-  const from0 = Math.floor(from / BUCKET_MS) * BUCKET_MS
-  const bucketCount = Math.max(1, Math.ceil((to - from0) / BUCKET_MS))
-  const EMPTY = {
-    tokIn: 0, tokCached: 0, tokOut: 0,
-    amtIn: 0n, amtCached: 0n, amtOut: 0n, amtWrite: 0n, amtOther: 0n,
-    balance: 0n, executions: 0,
-  }
-  const at = (i) => buckets.get(from0 + i * BUCKET_MS) ?? EMPTY
-  const col = (fn) => Array.from({ length: bucketCount }, (_, i) => fn(at(i)))
-
-  const hour0 = Math.floor(from / HOUR_MS) * HOUR_MS
-  const hourCount = Math.max(1, Math.ceil((to - hour0) / HOUR_MS))
-  const modelNames = [...models.values()].sort((a, b) => Number(b.cost - a.cost)).map((m) => m.model)
-
-  // SPARSE: only hours where a model actually ran. Dense would be
-  // models x hours x 9 metrics of mostly zeros; activity is under 10%.
-  const perModelSparse = modelNames.map((name) => {
-    const h = [], ex = []
-    const inT = [], caT = [], ouT = [], inC = [], caC = [], ouC = [], wrC = [], otC = []
-    for (let i = 0; i < hourCount; i++) {
-      const mh = modelHours.get(`${name}\u0000${hour0 + i * HOUR_MS}`)
-      if (!mh) continue
-      h.push(i); ex.push(mh.executions)
-      inT.push(mh.inT); caT.push(mh.caT); ouT.push(mh.ouT)
-      inC.push(fromScaled(mh.inC)); caC.push(fromScaled(mh.caC)); ouC.push(fromScaled(mh.ouC))
-      wrC.push(fromScaled(mh.wrC)); otC.push(fromScaled(mh.otC))
+  const out = {}
+  for (const [key, r] of Object.entries(ranges)) {
+    const at = (b) => r.buckets.get(b)
+    const col = (fn) => r.boundaries.map((b) => fn(at(b)))
+    out[key] = {
+      bucketMs: r.spec.bucketMs,
+      bucketCount: r.spec.count,
+      zone: ZONE,
+      // Emitted rather than derived: locally-aligned buckets are not a strict
+      // arithmetic grid across a daylight-saving change.
+      x: r.boundaries,
+      tokens: {
+        input: col((b) => b.tokIn),
+        cached: col((b) => b.tokCached),
+        output: col((b) => b.tokOut),
+      },
+      cost: {
+        input: col((b) => fromScaled(b.amtIn)),
+        cached: col((b) => fromScaled(b.amtCached)),
+        output: col((b) => fromScaled(b.amtOut)),
+        write: col((b) => fromScaled(b.amtWrite)),
+        // Non-token charges (web search requests, and whatever Airia adds
+        // next), kept separate so the stacked chart sums to the true total.
+        other: col((b) => fromScaled(b.amtOther)),
+      },
+      executions: col((b) => b.executions),
+      models: [...r.models.entries()]
+        .map(([model, m]) => ({
+          model,
+          spend: fromScaled(m.inC + m.caC + m.ouC + m.wrC + m.otC),
+          tokensIn: m.inT + m.caT,
+          tokensOut: m.ouT,
+          executions: m.executions,
+          // Unit price per category. Never blend these: a blended rate ranks
+          // models by cache hit rate rather than by price, which inverts the
+          // ordering (the cheapest model per token can blend highest simply
+          // because it caches least).
+          inputRate: m.inT > 0 ? (fromScaled(m.inC) / m.inT) * 1_000_000 : null,
+          outputRate: m.ouT > 0 ? (fromScaled(m.ouC) / m.ouT) * 1_000_000 : null,
+        }))
+        .filter((m) => m.executions > 0)
+        .sort((a, b) => b.spend - a.spend),
     }
-    return { model: name, h, ex, inT, caT, ouT, inC, caC, ouC, wrC, otC }
-  })
-
-
-  return {
-    from0, bucketCount,
-    byModel: { hour0, hourCount, models: perModelSparse },
-    tokens: {
-      input: col((b) => b.tokIn),
-      cached: col((b) => b.tokCached),
-      output: col((b) => b.tokOut),
-    },
-    cost: {
-      input: col((b) => fromScaled(b.amtIn)),
-      cached: col((b) => fromScaled(b.amtCached)),
-      output: col((b) => fromScaled(b.amtOut)),
-      write: col((b) => fromScaled(b.amtWrite)),
-      // Non-token charges (web search requests, and whatever Airia adds next).
-      // Emitted separately so the stacked cost chart still sums to the true
-      // total instead of quietly dropping them.
-      other: col((b) => fromScaled(b.amtOther)),
-    },
-    balanceUsed: col((b) => fromScaled(b.balance)),
-    executions: col((b) => b.executions),
-
-    stats: { providers, reconciledAmounts, mismatchedAmounts },
   }
+
+  return { ranges: out, stats: { providers, reconciled, mismatched, placed } }
 }
 
 /* ------------------------------------------------------------------ main -- */
 
 const started = Date.now()
-console.log(`Airia ingest — ${new Date(from).toISOString()} to ${new Date(to).toISOString()}`)
-console.log(`  source=${SOURCE}  bucket=${BUCKET_MIN}min  workers=${CONCURRENCY}  chunk=${CHUNK_MS / 3_600_000}h`)
 
-// Probe first, so a silent truncation later can be caught by comparison.
+// Fetch far enough back to fill the longest range, from its first boundary.
+const earliest = Math.min(...Object.values(RANGE_SPECS)
+  .map((s) => buildBoundaries(s.bucketMs, s.count, now)[0]))
+const from = earliest
+const to = now
+
+console.log(`Airia ingest — ${new Date(from).toISOString()} to ${new Date(to).toISOString()}`)
+console.log(`  source=${SOURCE}  zone=${ZONE}  workers=${CONCURRENCY}  chunk=${CHUNK_MS / 3_600_000}h`)
+for (const [k, s] of Object.entries(RANGE_SPECS)) {
+  console.log(`    ${k.padEnd(4)} ${String(s.count).padStart(3)} bars x ${(s.bucketMs / 60_000).toString().padStart(4)} min`)
+}
+
 const probeUrl = `${BASE}?startTime=${from}&endTime=${to}&limit=1&offset=0`
 const probe = await fetch(probeUrl, {
   headers: { 'x-api-key': API_KEY, accept: 'application/json' },
@@ -390,9 +435,8 @@ const chunks = await pool(windows.map(([s, e]) => () => fetchWindow(s, e)), CONC
 const all = chunks.flat()
 
 console.log(`  fetched ${all.length.toLocaleString()} rows (${splitCount} window splits)`)
-if (all.length !== probe.totalCount) {
-  console.log(`  NOTE: fetched ${all.length} vs probe ${probe.totalCount} — ` +
-    `expected if rows landed while fetching; investigate a large shortfall.`)
+if (all.length < probe.totalCount) {
+  console.log(`  NOTE: fetched ${all.length} vs probe ${probe.totalCount} — investigate a large shortfall.`)
 }
 
 const scoped = SOURCE === 'all' ? all : all.filter((r) => r.executionSourceType === SOURCE)
@@ -416,40 +460,42 @@ writeFileSync(
 
 const out = {
   meta: {
-    from, to, bucketMs: BUCKET_MS, source: SOURCE,
-    // The x axis is a strict arithmetic grid, described rather than shipped:
-    // x[i] === from0 + i * bucketMs. Keeps 25k timestamps out of the payload
-    // and means x can never drift out of step with the value arrays.
-    from0: agg.from0, bucketCount: agg.bucketCount,
     generatedAt: new Date().toISOString(),
+    now, from, to,
+    source: SOURCE,
+    zone: ZONE,
     rowCount: scoped.length,
+    rowsPlaced: agg.stats.placed,
     rangeTotalCount: probe.totalCount,
     windowSplits: splitCount,
     providers: agg.stats.providers,
     otherChargeKeys: [...otherChargeKeys],
-    amountsReconciled: agg.stats.reconciledAmounts,
-    amountsMismatched: agg.stats.mismatchedAmounts,
+    amountsReconciled: agg.stats.reconciled,
+    amountsMismatched: agg.stats.mismatched,
     warnings: [...warnings],
   },
-  tokens: agg.tokens,
-  cost: agg.cost,
-  balanceUsed: agg.balanceUsed,
-  executions: agg.executions,
-  byModel: agg.byModel,
+  ranges: agg.ranges,
 }
 
 mkdirSync(dirname(OUT), { recursive: true })
 writeFileSync(OUT, JSON.stringify(out))
 
 const sum = (a) => a.reduce((p, c) => p + c, 0)
-const filled = agg.executions.filter((n) => n > 0).length
-console.log(`\n  buckets: ${agg.bucketCount.toLocaleString()} dense (${filled.toLocaleString()} with activity, ${(filled / agg.bucketCount * 100).toFixed(1)}%)`)
-console.log(`  amounts reconciled: ${agg.stats.reconciledAmounts.toLocaleString()} / mismatched: ${agg.stats.mismatchedAmounts}`)
-console.log(`  tokens  in ${sum(agg.tokens.input).toLocaleString()} · cached ${sum(agg.tokens.cached).toLocaleString()} · out ${sum(agg.tokens.output).toLocaleString()}`)
-const costTotal = sum(agg.cost.input) + sum(agg.cost.cached) + sum(agg.cost.output) + sum(agg.cost.write) + sum(agg.cost.other)
-console.log(`  cost    $${costTotal.toFixed(4)}  (in $${sum(agg.cost.input).toFixed(4)} · cached $${sum(agg.cost.cached).toFixed(4)} · out $${sum(agg.cost.output).toFixed(4)} · write $${sum(agg.cost.write).toFixed(4)} · other $${sum(agg.cost.other).toFixed(4)})`)
-if (otherChargeKeys.size) console.log(`  other charge keys: ${[...otherChargeKeys].join(', ')}`)
-console.log(`  balance $${sum(agg.balanceUsed).toFixed(4)}`)
+console.log(`\n  amounts reconciled: ${agg.stats.reconciled.toLocaleString()} / mismatched: ${agg.stats.mismatched}`)
+for (const [k, r] of Object.entries(agg.ranges)) {
+  const cost = sum(r.cost.input) + sum(r.cost.cached) + sum(r.cost.output) + sum(r.cost.write) + sum(r.cost.other)
+  const tok = sum(r.tokens.input) + sum(r.tokens.cached) + sum(r.tokens.output)
+  const live = r.executions.filter((n) => n > 0).length
+  console.log(`  ${k.padEnd(4)} $${cost.toFixed(2).padStart(9)}  ${tok.toLocaleString().padStart(15)} tokens  ` +
+    `${String(live).padStart(3)}/${r.bucketCount} bars with activity  ${r.models.length} models`)
+}
+if (otherChargeKeys.size) console.log(`\n  other charge keys: ${[...otherChargeKeys].join(', ')}`)
 if (warnings.size) { console.log('\n  warnings:'); for (const w of warnings) console.log(`    - ${w}`) }
 console.log(`\n  wrote ${OUT.replace(ROOT + '/', '')} in ${((Date.now() - started) / 1000).toFixed(1)}s`)
-if (flag('verbose')) console.log(JSON.stringify(out.byModel.models.map((m) => m.model), null, 2))
+if (flag('verbose')) {
+  for (const [k, r] of Object.entries(agg.ranges)) {
+    console.log(`\n${k} first/last bar (${ZONE}):`)
+    const f = new Intl.DateTimeFormat('en-AU', { timeZone: ZONE, dateStyle: 'medium', timeStyle: 'short' })
+    console.log('  ', f.format(new Date(r.x[0])), '->', f.format(new Date(r.x[r.x.length - 1])))
+  }
+}

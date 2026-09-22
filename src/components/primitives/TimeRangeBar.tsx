@@ -1,4 +1,4 @@
-export const RANGES = ['24H', '7D', '1M', '3M'] as const
+export const RANGES = ['24H', '7D', '14D', '1M', '3M'] as const
 export type RangeKey = (typeof RANGES)[number] | 'Custom'
 
 export interface TimeRangeBarProps {

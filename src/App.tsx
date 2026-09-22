@@ -4,9 +4,9 @@ import {
   TimeRangeBar, ToolbarButton, FilterIcon, SavedIcon,
   type RangeKey,
 } from './components'
-import { series, other as otherColor } from './theme/palette'
+import { series } from './theme/palette'
 import { axisDate, compact, currency, full, grainFor, stamp } from './lib/format'
-import { useAiria, sliceRange, runningTotal, pacedProjection } from './data/airia'
+import { useAiria, summarise, runningTotal, dataRangeFor } from './data/airia'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
@@ -28,9 +28,6 @@ const C = {
   write: series(7),    // violet
   other: series(5),    // magenta
   total: series(1),
-  // The pace line is derived, not measured, so it recedes to the
-  // de-emphasis grey rather than taking a categorical slot.
-  pace: otherColor,
 } as const
 
 export default function App() {
@@ -41,14 +38,14 @@ export default function App() {
   const [theme, setTheme] = useTheme()
   const load = useAiria()
 
-  const slice = useMemo(
-    () => (load.status === 'ready' ? sliceRange(load.data, range) : null),
-    [load, range],
-  )
+  /* The ingest already bucketed each range to its own bar size and count, so
+     selecting a range is a lookup rather than a slice-and-downsample. */
+  const block = load.status === 'ready' ? load.data.ranges[dataRangeFor(range)] : null
+  const slice = useMemo(() => (block ? summarise(block) : null), [block])
 
   const grain = useMemo(
-    () => (slice && slice.x.length > 1 ? grainFor(slice.x[slice.x.length - 1] - slice.x[0]) : 'day'),
-    [slice],
+    () => (block && block.x.length > 1 ? grainFor(block.x[block.x.length - 1] - block.x[0]) : 'day'),
+    [block],
   )
 
   const toolbar = (
@@ -67,7 +64,7 @@ export default function App() {
     />
   )
 
-  if (load.status !== 'ready' || !slice) {
+  if (load.status !== 'ready' || !slice || !block) {
     return (
       <div className="page">
         <Head />
@@ -77,12 +74,11 @@ export default function App() {
     )
   }
 
-  // balanceUsed is deliberately not shown: it does not apply to gateway
-  // traffic, which bills against the caller's own provider credentials.
-  const { x, tokens, cost, executions, models, paid, totals } = slice
+  const { x, tokens, cost, executions, models } = block
+  const { paid, tokenTotals, totals } = slice
   const from = axisDate(x[0], grain)
   const to = axisDate(x[x.length - 1], grain)
-  const rowStamp = (i: number) => stamp(x[i], load.data.meta.bucketMs < 86_400_000)
+  const rowStamp = (i: number) => stamp(x[i], block.bucketMs < 86_400_000)
 
   /* Table twins are sampled to a readable length. Sampling every Nth bucket
      would be near-useless here: only ~9% of five-minute buckets contain any
@@ -91,11 +87,8 @@ export default function App() {
      the twin actually carries the values the chart is showing. */
   /* Cumulative views accumulate from zero at the start of the SELECTED window,
      so they reset on every range change rather than running all-time. */
-  const tokenTotals = x.map((_, i) => tokens.input[i] + tokens.cached[i] + tokens.output[i])
   const tokenCumulative = runningTotal(tokenTotals)
-  const tokenPace = pacedProjection(tokenTotals)
   const spendCumulative = runningTotal(paid)
-  const spendPace = pacedProjection(paid)
 
   const activeBuckets = x.map((_, i) => i).filter((i) => executions[i] > 0)
   const tableStride = Math.max(1, Math.floor(activeBuckets.length / 120))
@@ -126,22 +119,14 @@ export default function App() {
                 { label: 'input', color: C.input, shape: 'rect' },
                 { label: 'output', color: C.output, shape: 'rect' },
               ]
-            : [
-                { label: 'cumulative', color: C.total, shape: 'line' },
-                { label: `at current pace — ${compact(tokenPace[tokenPace.length - 1] ?? 0)}`, color: C.pace, shape: 'line' },
-              ]}
+            : undefined}
           activeSeries={active}
           onSeriesHover={setActive}
           footer={
             <>
               <AxisExtent from={from} to={to} />
               {tokenView === 'cumulative' ? (
-                <p className="card-note">
-                  Running total from zero at the start of the selected window. The dashed
-                  line is the window's average rate. Both finish at the same total, so
-                  where the solid line runs <em>below</em> the dashes the total accrued
-                  late — recent usage is outpacing the window average.
-                </p>
+                <p className="card-note">Running total from zero at the start of the selected window.</p>
               ) : null}
             </>
           }
@@ -161,11 +146,8 @@ export default function App() {
                 columns: [
                   { key: 't', label: 'Time' },
                   { key: 'c', label: 'Cumulative tokens', align: 'right' },
-                  { key: 'p', label: 'At current pace', align: 'right' },
                 ],
-                rows: rows((i) => ({
-                  t: rowStamp(i), c: full(tokenCumulative[i]), p: full(Math.round(tokenPace[i])),
-                })),
+                rows: rows((i) => ({ t: rowStamp(i), c: full(tokenCumulative[i]) })),
               }}
         >
           {tokenView === 'daily' ? (
@@ -190,10 +172,9 @@ export default function App() {
               formatValue={(n) => full(Math.round(n))}
               formatTick={compact}
               series={[
-                // 'max' not 'sum': a running total must not be re-summed when
-                // buckets are merged for display. It is monotonic, so the
+                // 'max' not 'sum': a running total must not be re-summed if
+                // buckets are ever merged for display. It is monotonic, so the
                 // largest value in a bucket is its closing value.
-                { key: 'pace', label: 'at current pace', color: C.pace, values: tokenPace, reducer: 'max', dashed: true },
                 { key: 'total', label: 'cumulative', color: C.total, values: tokenCumulative, reducer: 'max', area: true },
               ]}
             />
@@ -213,22 +194,14 @@ export default function App() {
                 { label: 'input', color: C.input, shape: 'rect' },
                 { label: 'other', color: C.other, shape: 'rect' },
               ]
-            : [
-                { label: 'cumulative', color: C.total, shape: 'line' },
-                { label: `at current pace — ${currency(spendPace[spendPace.length - 1] ?? 0)}`, color: C.pace, shape: 'line' },
-              ]}
+            : undefined}
           activeSeries={active}
           onSeriesHover={setActive}
           footer={
             <>
               <AxisExtent from={from} to={to} />
               {spendView === 'cumulative' ? (
-                <p className="card-note">
-                  Running total from zero at the start of the selected window. The dashed
-                  line is the window's average rate. Both finish at the same total, so
-                  where the solid line runs <em>below</em> the dashes the spend accrued
-                  late — the recent pace is above the window average.
-                </p>
+                <p className="card-note">Running total from zero at the start of the selected window.</p>
               ) : null}
             </>
           }
@@ -253,11 +226,8 @@ export default function App() {
                 columns: [
                   { key: 't', label: 'Time' },
                   { key: 'c', label: 'Cumulative spend', align: 'right' },
-                  { key: 'p', label: 'At current pace', align: 'right' },
                 ],
-                rows: rows((i) => ({
-                  t: rowStamp(i), c: currency(spendCumulative[i]), p: currency(spendPace[i]),
-                })),
+                rows: rows((i) => ({ t: rowStamp(i), c: currency(spendCumulative[i]) })),
               }}
         >
           {spendView === 'daily' ? (
@@ -284,7 +254,6 @@ export default function App() {
               formatValue={(n) => currency(n)}
               formatTick={(n) => `$${compact(n)}`}
               series={[
-                { key: 'pace', label: 'at current pace', color: C.pace, values: spendPace, reducer: 'max', dashed: true },
                 { key: 'total', label: 'cumulative', color: C.total, values: spendCumulative, reducer: 'max', area: true },
               ]}
             />
@@ -345,15 +314,22 @@ export default function App() {
       <p className="page__note">
         {load.data.meta.source} executions only · {full(load.data.meta.rowCount)} rows
         ingested, {full(load.data.meta.amountsReconciled)} of which reconcile exactly
-        {load.data.meta.amountsMismatched > 0
-          ? ` (${load.data.meta.amountsMismatched} do not)`
-          : ''} · {compact(load.data.meta.bucketCount)} buckets of {load.data.meta.bucketMs / 60_000} min ·
-        generated {new Date(load.data.meta.generatedAt).toLocaleString('en-GB')}
+        {load.data.meta.amountsMismatched > 0 ? ` (${load.data.meta.amountsMismatched} do not)` : ''} ·
+        {' '}{range === 'Custom' ? '3M' : range}: {block.bucketCount} bars of{' '}
+        {bucketLabel(block.bucketMs)}, aligned to {block.zone} · generated{' '}
+        {new Date(load.data.meta.generatedAt).toLocaleString('en-GB')}
       </p>
 
       <PaletteSheet />
     </div>
   )
+}
+
+/** "15 min", "2 hr", "1 day" — however the range's buckets are sized. */
+function bucketLabel(ms: number): string {
+  if (ms % 86_400_000 === 0) { const d = ms / 86_400_000; return d === 1 ? '1 day' : `${d} days` }
+  if (ms % 3_600_000 === 0) { const h = ms / 3_600_000; return h === 1 ? '1 hr' : `${h} hr` }
+  return `${ms / 60_000} min`
 }
 
 /** Daily / Cumulative switch, shown in a chart card's header. */

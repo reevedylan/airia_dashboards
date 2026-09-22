@@ -86,8 +86,7 @@ spend, and this repo is public. A fresh clone shows an empty state with the
 ingest command.
 
 Two charts, each switchable between **Daily** (stacked bars by category) and
-**Cumulative** (running total from zero at the window start, with a dashed
-line at the window's average rate carrying the projected total):
+**Cumulative** (running total from zero at the start of the selected window):
 
 - **Tokens** — cached input / input / output
 - **Token spend** — write cache / cached input / output / input / other
@@ -98,6 +97,26 @@ card.
 Tokens and spend stay separate charts on purpose. They are different signals
 and they diverge whenever the usage mix shifts toward pricier models or
 categories — merging them would hide exactly that.
+
+Each range has a fixed bucket size and bar count, so what you see is never a
+function of how wide the card happens to be:
+
+| Range | Bucket | Bars |
+|---|---|---|
+| 24H | 15 min | 96 |
+| 7D | 2 hr | 84 |
+| 14D | 4 hr | 84 |
+| 1M | 12 hr | 60 |
+| 3M | 1 day | 90 |
+
+Buckets are aligned to **local time** (`Australia/Sydney` by default,
+`--zone` to change), not UTC. The 12-hour buckets have to land on midnight and
+noon to read as AM/PM, and daily buckets on local midnight — UTC alignment
+would put them at 10am/10pm and split every Australian day in half. Daylight
+saving is handled.
+
+The ingest emits these ranges pre-bucketed — 414 buckets in total rather than
+25,921 five-minute ones for the client to reduce.
 
 Two measurement decisions worth knowing, documented in `CLAUDE.md`:
 

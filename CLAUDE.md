@@ -37,24 +37,47 @@ dark. Components reference them via `src/theme/palette.ts` (`series(1)` →
   It measures lightness band, chroma floor, CVD separation, normal-vision
   separation and contrast in both modes, and exits non-zero on failure.
 
+## Ranges, buckets and time zones
+
+Each range has a fixed bucket size and bar count, defined once in
+`RANGE_SPECS` in `scripts/ingest-airia.mjs`:
+
+| Range | Bucket | Bars | Window |
+|---|---|---|---|
+| 24H | 15 min | 96 | 24 h |
+| 7D | 2 hr | 84 | 7 d |
+| 14D | 4 hr | 84 | 14 d |
+| 1M | 12 hr | 60 | 30 d |
+| 3M | 1 day | 90 | 90 d |
+
+Window length is always `count x bucketMs`. The ingest emits each range
+already bucketed, so the client does a lookup, not a slice-and-downsample, and
+the bar count never depends on card width. Adding or changing a range means
+editing `RANGE_SPECS` and `RANGES` in `TimeRangeBar.tsx` together.
+
+**Buckets are aligned to local time, not UTC** (`ZONE`, default
+`Australia/Sydney`). The 12-hour buckets must fall on local midnight and noon
+to read as AM/PM; UTC alignment would put them at 10am/10pm and cut every
+Australian day in half. `localFloor()` does this in **two passes** — the
+offset is taken at `t`, then re-taken at the candidate boundary — because on a
+daylight-saving night those differ and a single pass lands an hour off local
+midnight. The `x` array is therefore shipped rather than derived: locally
+aligned buckets are not a strict arithmetic grid across a DST change, and a
+transition day's bucket is genuinely 23 or 25 hours long.
+
+`Custom` in the range bar is a placeholder control from the reference design
+with no block of its own; `dataRangeFor()` maps it to `3M`.
+
 ## Cumulative views
 
 Both charts switch between daily bars and a cumulative line. Two rules:
 
 - **Cumulative is always within the selected window.** `runningTotal()` runs
-  over the already-sliced arrays, so it starts at zero and resets on every
-  range change. Never accumulate across the whole ingest.
-- **A running total must be reduced with `max`, never `sum`.** Merging buckets
-  for display would otherwise add closing balances together. It is monotonic,
-  so the largest value in a merged bucket is its closing value.
-
-`pacedProjection()` draws the window's average rate from zero to the window
-end, dashed. Because the windows are trailing, the data reaches the window end
-and this lands on the actual total — so it reads as a constant-pace reference
-rather than a forecast. Both curves finish at the same value, which means the
-solid line running *below* the dashes indicates the total accrued late (recent
-pace above average), and above means front-loaded. Getting that direction
-backwards in the card copy is easy; it was wrong once already.
+  over that range's own arrays, so it starts at zero and resets on every range
+  change. Never accumulate across the whole ingest.
+- **A running total must be reduced with `max`, never `sum`.** If buckets are
+  ever merged for display, summing would add closing balances to each other.
+  It is monotonic, so the largest value in a merged bucket is its close.
 
 ## Chart data contract
 
