@@ -108,6 +108,21 @@ Buckets align to **local time** (`Australia/Sydney` by default), not UTC. The
 buckets on local midnight — UTC alignment would put them at 10am/10pm and split
 every Australian day in half. Daylight saving is handled.
 
+### Moving the window
+
+Duration and position are separate controls. The range buttons pick how long a
+window is; the chevrons step it back or forward by its own length, and the
+calendar jumps to "this duration, ending on that date". Forward is disabled at
+the live window — you can't step into the future.
+
+Whenever the window isn't the live one, the resolved range is shown beside the
+buttons with a **Jump to now** link, so it is always obvious when you're
+looking at history.
+
+Stepping is instant: raw rows are cached, so a new anchor is a re-fold rather
+than a re-fetch. Only stepping past what's cached triggers a fetch, and then
+only for the missing older slice.
+
 ### Filtering and isolating
 
 Two different mechanisms:

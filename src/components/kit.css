@@ -484,3 +484,48 @@
 .viz-rank thead th button:hover { color: var(--viz-text-primary); }
 .viz-rank thead th[aria-sort] button { color: var(--viz-text-primary); font-weight: 600; }
 .viz-rank__caret { font-size: 9px; line-height: 1; }
+
+/* --- window anchor (position, not duration) ------------------------------ */
+
+.viz-anchor {
+  display: inline-flex; align-items: stretch; gap: 2px; padding: 3px;
+  background: var(--viz-surface);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+}
+.viz-anchor__step {
+  display: inline-grid; place-items: center;
+  width: 30px; border: 0; border-radius: 6px; cursor: pointer;
+  color: var(--viz-text-secondary); background: none;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-anchor__step:hover:not(:disabled) { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+.viz-anchor__step:disabled { opacity: 0.3; cursor: default; }
+
+.viz-anchor__date {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 9px; border-radius: 6px; cursor: pointer;
+  color: var(--viz-text-secondary);
+}
+.viz-anchor__date:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+/* The native picker is kept for its calendar and keyboard support; only the
+   icon is shown until it is focused, so the control stays compact. */
+.viz-anchor__date input {
+  width: 0; padding: 0; border: 0; background: none; color: inherit;
+  font: 500 12px/1 var(--viz-font); opacity: 0;
+}
+.viz-anchor__date input:focus { width: 108px; opacity: 1; outline: none; }
+.viz-anchor__date input::-webkit-calendar-picker-indicator { cursor: pointer; }
+
+/* Only shown off-live, so it doubles as the signal that you are in history. */
+.viz-anchor__resolved {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: var(--viz-radius-ctl);
+  background: var(--viz-seq-100);
+  font: 500 12px/1 var(--viz-font); color: var(--viz-seq-700);
+  font-variant-numeric: tabular-nums;
+}
+.viz-anchor__resolved button {
+  font: 600 12px/1 var(--viz-font); color: var(--viz-seq-700);
+  background: none; border: 0; cursor: pointer; text-decoration: underline; padding: 2px;
+}

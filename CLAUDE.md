@@ -145,6 +145,20 @@ shipping every pre-aggregation would be.
 shares. Add a dimension by adding a column to the facts, not by adding
 another pre-aggregation.
 
+## Window anchoring
+
+The window's DURATION (the range buttons) and its END (the anchor) are
+independent. `App.tsx` holds `anchor: number | null`, where null is the live
+window; `useAiriaLive(key, anchor)` folds at that anchor.
+
+**Raw rows are cached in a ref**, so changing the anchor is a re-fold (~0.3s),
+not a re-fetch (~9s). Only an anchor reaching past the cached span fetches,
+and then only the missing older slice, which is prepended. Don't "simplify"
+this into a refetch per step.
+
+Stepping uses the nominal `count x bucketMs`; the boundary walk re-aligns
+afterwards, so a DST day cannot drift the window.
+
 ## Period comparison
 
 The KPI tiles compare against the window immediately before the selected one,
@@ -156,6 +170,13 @@ user.
 
 The previous window's boundaries are *walked* on the same local-time grid, not
 computed arithmetically, so a DST change cannot shift it.
+
+"Previous window" means the duration immediately before **the anchored
+window**, not before now — it moves with the anchor.
+
+A change past roughly tenfold is shown as a multiplier ("214k x") rather than
+a percentage; a near-zero baseline produced "21388468%", which is accurate and
+useless.
 
 Deltas are **neutral** — direction and magnitude, no colour. More spend is not
 inherently good or bad. A zero baseline reports "new"; both zero reports

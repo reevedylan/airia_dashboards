@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RangeKey } from '../components'
 import { aggregate, earliestBoundary, SERVICE_KEY, type AggregateResult } from '../lib/airia/aggregate'
 import { fetchAll, probe, AuthError, type Progress } from '../lib/airia/fetchAll'
+import type { RawRow } from '../lib/airia/aggregate'
 
 /**
  * Builds the dashboard in the browser from a pasted API key.
@@ -27,6 +28,8 @@ export interface AiriaMeta {
   to: number
   source: string
   zone: string
+  /** False when the window is anchored in the past rather than ending now. */
+  live: boolean
   /** Rows kept by the source filter — what the figures are built from. */
   rowCount: number
   /** Rows fetched, before the source filter. */
@@ -70,35 +73,54 @@ const ZONE = 'Australia/Sydney'
  * Nothing is persisted: no server, no tenant data on disk, and the key lives
  * only in this tab.
  */
-export function useAiriaLive(key: string | null): LoadState {
+export function useAiriaLive(key: string | null, anchor: number | null): LoadState {
   const [state, setState] = useState<LoadState>({ status: 'idle' })
   const run = useRef(0)
+  /** Raw rows kept so a different anchor is a re-fold, not a re-fetch. */
+  const cache = useRef<{ key: string; rows: RawRow[]; from: number; to: number } | null>(null)
 
   useEffect(() => {
-    if (!key) { setState({ status: 'idle' }); return }
+    if (!key) { setState({ status: 'idle' }); cache.current = null; return }
     const token = ++run.current
     const ctrl = new AbortController()
     const live = () => token === run.current && !ctrl.signal.aborted
 
     ;(async () => {
       try {
-        const now = Date.now()
-        const from = earliestBoundary(now, ZONE)
+        const wallNow = Date.now()
+        const at = anchor ?? wallNow
+        const needFrom = earliestBoundary(at, ZONE)
 
-        setState({ status: 'loading', message: 'Checking the key…' })
-        const expected = await probe(key, from, now)
-        if (!live()) return
+        if (cache.current?.key !== key) cache.current = null
 
-        setState({ status: 'loading', message: 'Fetching executions…' })
-        const { rows, splits } = await fetchAll(key, from, now, (p) => {
-          if (live()) setState({ status: 'loading', message: 'Fetching executions…', progress: p })
-        }, ctrl.signal)
-        if (!live()) return
+        let expected = cache.current?.rows.length ?? 0
+        if (!cache.current) {
+          setState({ status: 'loading', message: 'Checking the key…' })
+          expected = await probe(key, needFrom, wallNow)
+          if (!live()) return
+          setState({ status: 'loading', message: 'Fetching executions…' })
+          const { rows } = await fetchAll(key, needFrom, wallNow, (p) => {
+            if (live()) setState({ status: 'loading', message: 'Fetching executions…', progress: p })
+          }, ctrl.signal)
+          if (!live()) return
+          cache.current = { key, rows, from: needFrom, to: wallNow }
+        } else if (needFrom < cache.current.from) {
+          // Stepped back past what is cached: fetch only the missing older
+          // slice and prepend it, rather than refetching the whole span.
+          const gapTo = cache.current.from
+          setState({ status: 'loading', message: 'Fetching earlier executions…' })
+          const { rows } = await fetchAll(key, needFrom, gapTo, (p) => {
+            if (live()) setState({ status: 'loading', message: 'Fetching earlier executions…', progress: p })
+          }, ctrl.signal)
+          if (!live()) return
+          cache.current = { key, rows: rows.concat(cache.current.rows), from: needFrom, to: cache.current.to }
+        }
 
+        const held = cache.current!
         setState({ status: 'loading', message: 'Aggregating…' })
         // Yield a frame so the message paints before a synchronous fold.
         await new Promise((r) => requestAnimationFrame(() => r(null)))
-        const agg: AggregateResult = aggregate(rows, { now, zone: ZONE, source: 'Gateway' })
+        const agg: AggregateResult = aggregate(held.rows, { now: at, zone: ZONE, source: 'Gateway' })
         if (!live()) return
 
         setState({
@@ -106,7 +128,9 @@ export function useAiriaLive(key: string | null): LoadState {
           data: {
             meta: {
               generatedAt: new Date().toISOString(),
-              now, from, to: now,
+              now: at, from: needFrom, to: at,
+              /** True when the window ends at the wall clock rather than an anchor. */
+              live: anchor == null,
               source: 'Gateway',
               zone: ZONE,
               rowCount: agg.stats.rowCount,
@@ -114,7 +138,7 @@ export function useAiriaLive(key: string | null): LoadState {
               legacyTotals: agg.stats.legacyTotals,
               rowsPlaced: agg.stats.rowsPlaced,
               rangeTotalCount: expected,
-              windowSplits: splits,
+              windowSplits: 0,
               providers: agg.stats.providers,
               otherChargeKeys: agg.stats.otherChargeKeys,
               amountsReconciled: agg.stats.amountsReconciled,
@@ -133,7 +157,7 @@ export function useAiriaLive(key: string | null): LoadState {
     })()
 
     return () => { ctrl.abort() }
-  }, [key])
+  }, [key, anchor])
 
   return state
 }
@@ -269,10 +293,21 @@ export function delta(now: number, before: number): Delta | null {
   if (before === 0) return now === 0 ? null : { direction: 'up', text: 'new' }
   const change = (now - before) / before
   if (Math.abs(change) < 0.0005) return { direction: 'none', text: '0%' }
-  return {
-    direction: change > 0 ? 'up' : 'down',
-    text: `${Math.abs(change * 100) < 10 ? Math.abs(change * 100).toFixed(1) : Math.round(Math.abs(change * 100))}%`,
+  const direction = change > 0 ? 'up' : 'down'
+
+  // Past roughly tenfold a percentage stops being readable — a near-zero
+  // baseline produced "21388468%", which is accurate and useless. A
+  // multiplier says the same thing at a glance.
+  if (now > before * 10) {
+    const times = now / before
+    const shown = times >= 1000
+      ? `${Math.round(times / 1000).toLocaleString('en-US')}k`
+      : times >= 100 ? Math.round(times).toString() : times.toFixed(1)
+    return { direction, text: `${shown}\u00d7` }
   }
+
+  const pct = Math.abs(change * 100)
+  return { direction, text: `${pct < 10 ? pct.toFixed(1) : Math.round(pct)}%` }
 }
 
 /* --------------------------------------------------------- breakdowns -- */

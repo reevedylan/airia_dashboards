@@ -49,10 +49,12 @@ export default function App() {
   const [userFilter, setUserFilter] = useState<Set<string>>(new Set())
   const [isolate, setIsolate] = useState<Isolate>(null)
   const [tab, setTab] = useState<Dimension>('model')
+  /** Where the window ENDS. null means the live, ending-now window. */
+  const [anchor, setAnchor] = useState<number | null>(null)
   const [theme, setTheme] = useTheme()
 
   const { key, setKey, clear, remember } = useApiKey()
-  const load = useAiriaLive(key)
+  const load = useAiriaLive(key, anchor)
   const data = load.status === 'ready' ? load.data : null
   const allUsers = useAllUsers(data)
   const block = data ? data.ranges[range] : null
@@ -101,10 +103,33 @@ export default function App() {
 
   const serviceKey = data?.meta.serviceKeyLabel ?? 'Standard Key (service)'
 
+  /* Duration is the range buttons; the anchor moves that window through time.
+     Stepping uses the nominal duration — the boundary walk re-aligns it, so a
+     DST day cannot drift the window. */
+  const rangeMs = RANGE_MS[range]
+  const atNow = anchor == null
+  const anchorControls = {
+    atNow,
+    onStep: (dir: -1 | 1) => setAnchor((prev) => {
+      const next = (prev ?? Date.now()) + dir * rangeMs
+      return next >= Date.now() ? null : next
+    }),
+    // A date means "this duration, ending at the end of that day".
+    onPickDate: (iso: string) => {
+      const end = new Date(`${iso}T00:00:00`).getTime() + 86_400_000
+      setAnchor(end >= Date.now() ? null : end)
+    },
+    onNow: () => setAnchor(null),
+    resolved: block ? `${fmtX?.tick(block.x[0]) ?? ''} – ${fmtX?.tick(block.x[block.x.length - 1]) ?? ''}` : undefined,
+    dateValue: toISODate(anchor == null ? Date.now() : anchor - 1),
+    maxDate: toISODate(Date.now()),
+  }
+
   const toolbar = (
     <TimeRangeBar
       value={range}
       onChange={setRange}
+      anchor={anchorControls}
       filters={
         <MultiSelect
           label="User"
@@ -506,6 +531,21 @@ export default function App() {
       <PaletteSheet />
     </div>
   )
+}
+
+/** Window length per range, for stepping the anchor. */
+const RANGE_MS: Record<RangeKey, number> = {
+  '24H': 96 * 15 * 60_000,
+  '7D': 84 * 2 * 3_600_000,
+  '14D': 84 * 4 * 3_600_000,
+  '1M': 60 * 12 * 3_600_000,
+  '3M': 90 * 24 * 3_600_000,
+}
+
+/** Local YYYY-MM-DD, for the native date input. */
+function toISODate(t: number): string {
+  const d = new Date(t)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 /** "15 min", "2 hr", "1 day" — however the range's buckets are sized. */
