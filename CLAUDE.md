@@ -684,21 +684,47 @@ all of them a year ago — group under `NO_GATEWAY`, for the same reason
 `SERVICE_KEY` exists: a breakdown that silently drops rows makes every
 percentage wrong.
 
-**Names come from somewhere else, and may not come at all.** Executions
-carry only a UUID. `src/lib/airia/gateways.ts` fetches names from a separate
-endpoint and is built so that failure is ordinary: any non-OK response
-yields no names, `gatewayLabel()` falls back to the first 8 characters of
-the id, and nothing else on the page notices. That is not defensive
-padding — the names endpoint is a different resource and may want a
-different key or scope than the one pasted into the dashboard, so a version
-that only worked when the lookup succeeded would be broken for most keys.
+### Names come from a different endpoint
 
-The fetch is deliberately outside `LoadState`: the dashboard neither waits
-for it nor fails with it, and labels simply re-render if names arrive late.
+```
+executions   /airia/api/marketplace/v1/AIOperationExecutions
+names        /airia/v1/GatewayConfiguration?PageNumber=1&PageSize=100
+```
 
-`NAMES_URL` and `readNames()` are the two things to change when the endpoint
-is confirmed; `readNames` is already shape-tolerant about the envelope and
-the field names.
+Different path prefix, same host, same proxy, **same `x-api-key`** — no
+second credential. Paged (`PageNumber`/`PageSize`, with `totalCount`), and
+`PageSize=100` covers this tenant's 48 in one request; the loop pages
+anyway.
+
+The payload carries each configuration's API keys, routing rules and
+provider credentials. `readNames()` keeps the id and the name and drops the
+rest — holding the others for the life of the tab would be a liability, not
+a feature.
+
+The lookup is still allowed to fail: any non-OK response yields no names,
+labels fall back to the first 8 characters of the id, and nothing else
+notices. It runs outside `LoadState`, so the dashboard neither waits for it
+nor fails with it.
+
+### Three things the real data forced
+
+Measured against this tenant before wiring it up, and each one changes the
+UI rather than just the plumbing:
+
+- **Not every id resolves.** The endpoint lists configurations that exist
+  NOW; executions keep referring to ones since deleted. Nine of the 39
+  gateways in a year are unresolved, one of them with 3,212 calls — so this
+  is the common path, not an edge case. They keep their short id and the
+  tooltip says the configuration has probably been deleted.
+- **Names are not unique.** Two `Codex`, two `claude-bedrock`, four
+  `Untitled gateway configuration`. A duplicated name carries a short id
+  beside it, disambiguated against ALL configurations rather than the ones
+  in the window, so a label does not change as the range moves.
+- **An opaque value needs display text everywhere.** The filter's options
+  are ids, so sorting, searching and the trigger summary all have to run on
+  the LABEL — `MultiSelect` takes `optionText` for exactly this. Without it
+  the list sorts by UUID, typing "claude" matches nothing, and picking one
+  shows a UUID in the toolbar.
 
 ## User attribution
 

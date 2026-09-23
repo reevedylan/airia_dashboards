@@ -18,6 +18,15 @@ export interface MultiSelectProps {
   allLabel?: string
   /** Rendered instead of a raw option value (e.g. to mark a synthetic entry). */
   renderOption?: (value: string) => React.ReactNode
+  /**
+   * The text an option READS as, when that differs from its value.
+   *
+   * Needed whenever the value is an opaque id: searching and the trigger
+   * summary both work off this, so typing a gateway's name finds it and
+   * the chosen one is named rather than shown as a UUID. Rendering can
+   * still be overridden separately with `renderOption`.
+   */
+  optionText?: (value: string) => string
   placeholder?: string
   /** Glyph on the trigger. Two filters side by side need telling apart at a
    *  glance, before either label is read. */
@@ -36,8 +45,9 @@ export interface MultiSelectProps {
  */
 export function MultiSelect({
   label, options, selected, onToggle, onChange,
-  allLabel = 'All', renderOption, placeholder = 'Search…', icon,
+  allLabel = 'All', renderOption, optionText, placeholder = 'Search…', icon,
 }: MultiSelectProps) {
+  const text = optionText ?? ((v: string) => v)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const root = useRef<HTMLDivElement>(null)
@@ -63,13 +73,15 @@ export function MultiSelect({
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return q === '' ? options : options.filter((o) => o.toLowerCase().includes(q))
-  }, [options, query])
+    // Matched against what the option READS as, not its value: searching a
+    // list of UUIDs for the name printed on it should find it.
+    return q === '' ? options : options.filter((o) => text(o).toLowerCase().includes(q))
+  }, [options, query, text])
 
   const summary = selected.size === 0
     ? allLabel
     : selected.size === 1
-      ? [...selected][0]
+      ? text([...selected][0])
       : `${selected.size} selected`
 
   return (

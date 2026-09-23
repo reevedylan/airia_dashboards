@@ -229,9 +229,12 @@ of sync; don't reintroduce a second copy.
   than dropped — omitting them would make every percentage wrong. Neither
   share is stable: every row a year ago had no user, against ~1% of the last
   30 days.
-- **Gateway names live on another endpoint.** Executions carry only a UUID,
-  so names are fetched separately and the dashboard falls back to a short id
-  if that lookup is unavailable to the key in use.
+- **Gateway names live on another endpoint** (`/v1/GatewayConfiguration`),
+  reached with the same key. Names that are duplicated get a short id beside
+  them, and gateways that have since been deleted keep their short id — the
+  endpoint lists what exists now, while executions remember what they used.
+  If the lookup is unavailable to a key, every gateway shows a short id and
+  nothing else changes.
 
 Every row's token counts and charge amounts are checked to sum to the reported
 totals, and the mismatch count is printed in the page footer. It has been zero

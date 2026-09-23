@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   Card, AxisExtent, LineChart, BarChart, RankTable, StatTile,
   TimeRangeBar, ToolbarButton, MultiSelect, Tabs, KeyGate,
@@ -12,7 +12,7 @@ import {
   stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
   type Dimension, type BreakdownRow, type History, type DayRange, type Scope,
 } from './data/airia'
-import { gatewayLabel, gatewayTitle } from './lib/airia/gateways'
+import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateways'
 import { NO_GATEWAY } from './lib/airia/aggregate'
 import { useApiKey, maskKey } from './lib/apiKey'
 import { PaletteSheet } from './demo/PaletteSheet'
@@ -73,8 +73,15 @@ export default function App() {
   const data = load.data
   const busy = load.status === 'loading'
   const allUsers = useAllUsers(data)
-  const allGateways = useAllGateways(data)
   const gwNames = useGatewayNames(key)
+  const gwLabel = useCallback((id: string) => gatewayLabel(id, gwNames), [gwNames])
+  /* Sorted by what they READ as, not by their ids — an id-ordered list of
+     names looks shuffled. Re-sorts when the names land. */
+  const allGatewayIds = useAllGateways(data)
+  const allGateways = useMemo(
+    () => [...allGatewayIds].sort((a, b) => gwLabel(a).localeCompare(gwLabel(b))),
+    [allGatewayIds, gwLabel],
+  )
   const block = data ? (custom ? data.ranges.custom ?? null : data.ranges[range]) : null
 
   /* The filters are SCOPES: everything below derives from `scope`, so the
@@ -135,7 +142,7 @@ export default function App() {
   const serviceKey = data?.meta.serviceKeyLabel ?? 'Standard Key (service)'
   /** Whether the name lookup came back with anything — the gateway tab says
    *  so, rather than leaving a column of hex unexplained. */
-  const hasNames = Object.keys(gwNames).length > 0
+  const hasNames = hasGatewayNames(gwNames)
 
   /* Duration is the range buttons; the anchor moves that window through
      time. Stepping is in the range's OWN units — calendar months for 1M and
@@ -224,7 +231,8 @@ export default function App() {
               onChange={setGatewayFilter}
               allLabel="All gateways"
               placeholder="Search gateways…"
-              renderOption={(v) => <span title={gatewayTitle(v, gwNames)}>{gatewayLabel(v, gwNames)}</span>}
+              optionText={gwLabel}
+              renderOption={(v) => <span title={gatewayTitle(v, gwNames)}>{gwLabel(v)}</span>}
             />
           ) : null}
         </>
@@ -312,7 +320,7 @@ export default function App() {
   const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
   const cumNote = `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`
   const isolationNote = activeRow
-    ? `${isolate!.dim === 'gateway' ? gatewayLabel(activeRow.key, gwNames) : activeRow.key} — ${share(activeRow.shareTokens)} of tokens, ` +
+    ? `${isolate!.dim === 'gateway' ? gwLabel(activeRow.key) : activeRow.key} — ${share(activeRow.shareTokens)} of tokens, ` +
       `${share(activeRow.shareSpend)} of spend · grey is all ${DIM_LABEL[isolate!.dim]}`
     : null
 
@@ -366,7 +374,7 @@ export default function App() {
             userFilter.size === 0 ? null
               : userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`,
             gatewayFilter.size === 0 ? null
-              : gatewayFilter.size === 1 ? `gateway ${gatewayLabel([...gatewayFilter][0], gwNames)}`
+              : gatewayFilter.size === 1 ? `gateway ${gwLabel([...gatewayFilter][0])}`
               : `${gatewayFilter.size} gateways`,
           ].filter(Boolean).join(' on ')} ·
           {' '}everything below is recomputed against that traffic alone.
@@ -604,7 +612,7 @@ export default function App() {
               { key: 'n', label: 'Executions', align: 'right' },
             ],
             rows: breakdownRows.map((r) => ({
-              k: tab === 'gateway' ? gatewayLabel(r.key, gwNames) : r.key,
+              k: tab === 'gateway' ? gwLabel(r.key) : r.key,
               c: currency(r.spend),
               cs: share(r.shareSpend),
               ti: full(r.tokensIn),
@@ -621,7 +629,12 @@ export default function App() {
                 ? `Both charts are showing this ${active.dim} only. Click the row again, or "Show all ${DIM_LABEL[active.dim]}", to return to the combined view.`
                 : `Click a ${tab} to show it on its own in both charts, with the all-${DIM_LABEL[tab]} total behind it.`}
               {tab === 'user' ? ` Requests made with the tenant's standard service key rather than an individual's are grouped as ${serviceKey}.` : ''}
-              {tab === 'gateway' ? ` One row per gateway configuration. Calls from before gateways were recorded are grouped as ${NO_GATEWAY}${hasNames ? '' : ', and the rest are shown by the first block of their id'}.` : ''}
+              {tab === 'gateway'
+                ? ` One row per gateway configuration. Calls from before gateways were recorded are grouped as ${NO_GATEWAY}.` +
+                  (hasNames
+                    ? ' A row showing a short id is a configuration that no longer exists — its traffic is still counted.'
+                    : ' Names could not be loaded for this key, so each row shows the first block of its id.')
+                : ''}
               {(userFilter.size > 0 || gatewayFilter.size > 0)
                 ? ' This list is scoped by the filters above too.'
                 : ''}
@@ -635,7 +648,7 @@ export default function App() {
             key={tab}
             rows={breakdownRows.map((r) => ({
               key: r.key,
-              label: tab === 'gateway' ? gatewayLabel(r.key, gwNames) : r.key,
+              label: tab === 'gateway' ? gwLabel(r.key) : r.key,
               value: r.spend,
               cells: {
                 shareSpend: r.shareSpend,
