@@ -8,42 +8,41 @@ export interface AnchorControls {
   /** Step the window back or forward by its own length. */
   onStep: (direction: -1 | 1) => void
   /**
-   * Jump to the window of the selected duration ending on this day.
-   *
-   * A DAY, not an instant: the window then ends on a boundary every bucket
-   * size divides, so the bars land on the same grid whatever the range. The
-   * caller turns the civil day into an instant, because only it knows the
-   * zone the buckets were aligned to.
+   * A custom range, from the calendar. Both ends are civil DAYS, resolved
+   * low-to-high whichever order they were clicked; the caller turns them
+   * into instants, because only it knows the zone the buckets were aligned
+   * to. Choosing one leaves preset mode.
    */
-  onPickDay: (day: string) => void
-  /** Return to the live, ending-now window. */
+  onSelectRange: (from: string, to: string) => void
+  /** Return to the live window of the selected preset. */
   onNow: () => void
   /** True when the window already ends at the wall clock. */
   atNow: boolean
   /** True when the window already reaches the oldest retained data. */
   atOldest?: boolean
-  /** The resolved window, shown only when it is not the live one. */
+  /** The resolved window — shown in BOTH modes, since a custom range has no
+   *  "now" to fall back to. */
   resolved?: string
-  /**
-   * True while a fetch is in flight. The chip describes the window that is
-   * DRAWN, so during a load it belongs to the held render rather than to the
-   * date beside it, and is dimmed to say so.
-   */
-  stale?: boolean
-  /** The day the window ends on, `YYYY-MM-DD` in the data's zone. */
-  day: string
-  /** The day the window starts on — banded in the calendar. */
-  fromDay?: string
-  /** Latest selectable day: today, in the data's zone. */
+  /** The window on screen, as civil days: banded in the calendar, and named
+   *  on the button. */
+  window: { from: string; to: string }
+  /** Earliest and latest selectable days, and the longest span. */
   maxDay?: string
-  /** Earliest day the source still holds. */
   minDay?: string
-  /** One line under the calendar grid: what a click will actually select. */
+  maxSpanDays?: number
+  /** One line under the calendar grid, when no selection is in progress. */
   note?: React.ReactNode
+  /** True while a fetch is in flight: the resolved chip then describes the
+   *  window still DRAWN rather than the one being fetched, and dims. */
+  stale?: boolean
+  /** True when the window came from the calendar rather than a preset. */
+  custom?: boolean
 }
 
 export interface TimeRangeBarProps {
-  value: RangeKey
+  /** The active preset, or null when a custom range is showing: the two are
+   *  mutually exclusive, so nothing is pressed in custom mode. */
+  value: RangeKey | null
   onChange: (next: RangeKey) => void
   /** Moves the window in time without changing its duration. */
   anchor?: AnchorControls
@@ -83,8 +82,11 @@ export function TimeRangeBar({ value, onChange, anchor, filters, actions }: Time
 
       {anchor ? <AnchorBar range={value} {...anchor} /> : null}
 
-      {anchor && !anchor.atNow ? (
+      {/* Shown whenever the window is not the live preset — which includes
+          every custom range, since a custom range has no "now" to be at. */}
+      {anchor && (!anchor.atNow || anchor.custom) ? (
         <span className="viz-anchor__resolved" data-stale={anchor.stale ? '' : undefined}>
+          {anchor.custom ? <span className="viz-anchor__tag">Custom</span> : null}
           {anchor.resolved}
           <button type="button" onClick={anchor.onNow}>Jump to now</button>
         </span>
@@ -101,8 +103,8 @@ export function TimeRangeBar({ value, onChange, anchor, filters, actions }: Time
  * the pair reads as one row of controls rather than two unrelated widgets.
  */
 function AnchorBar({
-  range, onStep, onPickDay, atNow, atOldest, day, fromDay, maxDay, minDay, note,
-}: AnchorControls & { range: RangeKey }) {
+  range, onStep, onSelectRange, atNow, atOldest, window: win, maxDay, minDay, maxSpanDays, note, custom,
+}: AnchorControls & { range: RangeKey | null }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -124,8 +126,8 @@ function AnchorBar({
       if (over > 0) el.style.transform = `translateX(${-Math.min(over, r.left - GUTTER)}px)`
     }
     fit()
-    window.addEventListener('resize', fit)
-    return () => window.removeEventListener('resize', fit)
+    globalThis.addEventListener('resize', fit)
+    return () => globalThis.removeEventListener('resize', fit)
   }, [open])
 
   // Close on outside click or Escape, and hand focus back to the trigger —
@@ -148,6 +150,8 @@ function AnchorBar({
     }
   }, [open])
 
+  const stepLabel = custom ? 'range' : range
+
   return (
     <div className="viz-anchor" role="group" aria-label="Window position" ref={root}>
       {/* Stepping past retention would show a window the source has
@@ -155,8 +159,8 @@ function AnchorBar({
       <button
         type="button"
         className="viz-anchor__step"
-        aria-label={`Previous ${range}`}
-        title={atOldest ? 'No data older than this is retained' : `Previous ${range}`}
+        aria-label={`Previous ${stepLabel}`}
+        title={atOldest ? 'No data older than this is retained' : `Previous ${stepLabel}`}
         disabled={atOldest}
         onClick={() => onStep(-1)}
       >
@@ -169,19 +173,20 @@ function AnchorBar({
         className="viz-anchor__date"
         aria-expanded={open}
         aria-haspopup="dialog"
-        title={`The ${range} window ending on this day`}
+        data-custom={custom ? '' : undefined}
+        title="Pick a start and end date"
         onClick={() => setOpen((v) => !v)}
       >
         <CalendarIcon />
-        <span className="viz-anchor__daylabel">{dayLabel(day)}</span>
+        <span className="viz-anchor__daylabel">{spanLabel(win.from, win.to)}</span>
       </button>
 
       {/* Stepping past now would show a window that has not happened. */}
       <button
         type="button"
         className="viz-anchor__step"
-        aria-label={`Next ${range}`}
-        title={atNow ? 'Already at the latest window' : `Next ${range}`}
+        aria-label={`Next ${stepLabel}`}
+        title={atNow ? 'Already at the latest window' : `Next ${stepLabel}`}
         disabled={atNow}
         onClick={() => onStep(1)}
       >
@@ -191,14 +196,14 @@ function AnchorBar({
       {open ? (
         <div className="viz-anchor__pop" ref={pop}>
           <Calendar
-            label={`End date for the ${range} window`}
-            value={day}
-            from={fromDay}
+            label="Choose a start and end date"
+            value={win}
             max={maxDay}
             min={minDay}
+            maxSpanDays={maxSpanDays}
             note={note}
-            onPick={(d) => {
-              onPickDay(d)
+            onSelect={(from, to) => {
+              onSelectRange(from, to)
               setOpen(false)
               trigger.current?.focus()
             }}
@@ -211,6 +216,15 @@ function AnchorBar({
 
 /** Breathing room kept between the popover and the window edge. */
 const GUTTER = 8
+
+/** "22 Sept 2026", or "4 Mar – 3 Jun 2026" — the year said once. */
+function spanLabel(from: string, to: string): string {
+  if (from === to) return dayLabel(from)
+  const start = from.slice(0, 4) === to.slice(0, 4)
+    ? dayLabel(from).replace(/ \d{4}$/, '')
+    : dayLabel(from)
+  return `${start} – ${dayLabel(to)}`
+}
 
 export interface ToolbarButtonProps {
   icon: React.ReactNode

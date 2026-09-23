@@ -8,9 +8,9 @@ import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
-  previousTotals, delta, dayOf, endOfDay, stepWindow, clampAnchor,
-  oldestEndDay, retentionFloor, RETENTION_DAYS,
-  type Dimension, type BreakdownRow, type History,
+  previousTotals, delta, dayOf, endOfDay, stepWindow, oldestEndDay, retentionFloor,
+  stepRange, rangeDays, RETENTION_DAYS,
+  type Dimension, type BreakdownRow, type History, type DayRange,
 } from './data/airia'
 import { useApiKey, maskKey } from './lib/apiKey'
 import { PaletteSheet } from './demo/PaletteSheet'
@@ -52,17 +52,23 @@ export default function App() {
   const [tab, setTab] = useState<Dimension>('model')
   /** Where the window ENDS. null means the live, ending-now window. */
   const [anchor, setAnchor] = useState<number | null>(null)
+  /**
+   * A window drawn on the calendar instead of chosen from the presets.
+   * Mutually exclusive with them: setting one clears the other, so the
+   * toolbar never shows two answers to "which window is this".
+   */
+  const [custom, setCustom] = useState<DayRange | null>(null)
   const [theme, setTheme] = useTheme()
 
   const { key, setKey, clear, remember } = useApiKey()
-  const load = useAiriaLive(key, anchor)
+  const load = useAiriaLive(key, anchor, custom)
   /* The last good fold, HELD while the next one loads. Reading it only when
      the status is 'ready' is what used to drop the page back to the key gate
      mid-session, the moment an anchor reached past the cached rows. */
   const data = load.data
   const busy = load.status === 'loading'
   const allUsers = useAllUsers(data)
-  const block = data ? data.ranges[range] : null
+  const block = data ? (custom ? data.ranges.custom ?? null : data.ranges[range]) : null
 
   /* The user filter is a SCOPE: everything below derives from `scoped`, so the
      KPI tiles, both charts and both breakdowns all recompute together. */
@@ -100,6 +106,18 @@ export default function App() {
   }, [block, scoped, active, userFilter])
 
   const fmtX = useMemo(() => (block ? bucketFormat(block.bucketMs, block.zone) : null), [block])
+  /**
+   * Tick labels drop the year, which is right until a window spans two of
+   * them — "23 Sept – 22 Sept" is not a range anyone can read. A custom
+   * range can be a whole year, so both ends say which one.
+   */
+  const extentLabel = useMemo(() => {
+    if (!block || !fmtX) return () => ''
+    const first = block.x[0]
+    const last = block.x[block.x.length - 1]
+    const crossesYear = new Date(first).getFullYear() !== new Date(last).getFullYear()
+    return (t: number) => (crossesYear ? `${fmtX.tick(t)} ${new Date(t).getFullYear()}` : fmtX.tick(t))
+  }, [block, fmtX])
   const labelAt = useMemo(() => {
     if (!block || !fmtX) return () => ''
     const next = new Map(block.x.map((t, i) => [t, block.x[i + 1] ?? t + block.bucketMs]))
@@ -110,46 +128,66 @@ export default function App() {
 
   /* Duration is the range buttons; the anchor moves that window through
      time. Stepping is in the range's OWN units — calendar months for 1M and
-     3M — so a step back lands on the window immediately before this one
-     rather than 30 days earlier. */
-  const atNow = anchor == null
+     3M, the drawn span for a custom range — so a step back lands on the
+     window immediately before this one. */
+  const today = dayOf(Date.now())
+  const floorDay = dayOf(retentionFloor())
   /* The last instant the window includes, and the day it falls on. While
      loading, these describe the window being fetched rather than the one
      still on screen — the controls lead, the plot catches up. */
-  const endsAt = anchor ?? Date.now()
-  const endDay = dayOf(endsAt)
-  /* Airia's logs expire at a year, so no window may reach past that. The
-     bound is on the whole span, not the date clicked: a 3M window ending
-     one day inside retention would be two-thirds empty. */
-  const oldestDay = oldestEndDay(range)
+  const endDay = custom ? custom.to : dayOf(anchor ?? Date.now())
+  const startDay = custom ? custom.from : (block ? dayOf(block.x[0]) : endDay)
+  /* Airia's logs expire at a year, so no window may reach past that. For a
+     preset the bound is on the whole span, not the date clicked: a 3M
+     window ending one day inside retention would be two-thirds empty. */
+  const oldestDay = custom ? addDaysISO(floorDay, rangeDays(custom) - 1) : oldestEndDay(range)
+  const atNow = custom ? custom.to >= today : anchor == null
+
+  /** A preset always means "this duration, ending now" — it discards any
+   *  anchor and leaves custom mode. The two are one control, not two. */
+  const selectPreset = (next: RangeKey) => {
+    setRange(next)
+    setAnchor(null)
+    setCustom(null)
+  }
+
   const anchorControls = {
     atNow,
     atOldest: endDay <= oldestDay,
-    onStep: (dir: -1 | 1) => setAnchor((prev) => stepWindow(range, prev, dir)),
-    /* A day, not an instant: the window ends when that local day does, which
-       is a boundary every bucket size divides. Picking today means the live
-       window, so the dashboard goes back to following the clock rather than
-       freezing at tonight's midnight. */
-    onPickDay: (day: string) => {
-      const end = endOfDay(day)
-      setAnchor(end >= Date.now() ? null : clampAnchor(range, end))
+    custom: custom != null,
+    onStep: (dir: -1 | 1) => {
+      if (custom) setCustom((prev) => (prev ? stepRange(prev, dir) : prev))
+      else setAnchor((prev) => stepWindow(range, prev, dir))
     },
-    onNow: () => setAnchor(null),
-    resolved: block ? `${fmtX?.tick(block.x[0]) ?? ''} – ${fmtX?.tick(block.x[block.x.length - 1]) ?? ''}` : undefined,
+    /* Any calendar selection is a custom window — that is what the picker
+       is for now — so it leaves preset mode. Both ends arrive already
+       ordered; the data layer turns them into local midnight and the last
+       millisecond of the closing day. */
+    onSelectRange: (from: string, to: string) => setCustom({ from, to }),
+    /* "Now" means the live window of whichever preset is selected, which
+       is also the way out of custom mode. */
+    onNow: () => { setAnchor(null); setCustom(null) },
+    /* The END of the window, not the start of its last bucket. With a
+       multi-day grain those differ: a 1 Mar – 31 Aug range buckets in twos
+       and its last bar STARTS on the 30th, which made the chip disagree
+       with the dates that were actually picked. */
+    resolved: block
+      ? `${extentLabel(block.x[0])} – ${extentLabel(custom ? endOfDay(custom.to) : block.x[block.x.length - 1])}`
+      : undefined,
     stale: busy,
-    day: endDay,
-    fromDay: block ? dayOf(block.x[0]) : undefined,
-    maxDay: dayOf(Date.now()),
-    minDay: oldestDay,
-    note: `The ${range} window, ending when that day does${block ? ` · ${block.zone}` : ''}.`,
+    window: { from: startDay, to: endDay },
+    maxDay: today,
+    minDay: floorDay,
+    maxSpanDays: RETENTION_DAYS,
+    note: `Whole days, ${block?.zone ?? 'local time'}. The bar size follows the span.`,
   }
 
   const toolbar = (
     <TimeRangeBar
-      value={range}
-      /* An anchor legal for 24H can be older than 3M's oldest window, so it
-         is re-clamped whenever the duration changes. */
-      onChange={(next) => { setRange(next); setAnchor((a) => clampAnchor(next, a)) }}
+      /* Nothing is pressed while a custom range is showing: a preset and a
+         drawn range are alternatives, not layers. */
+      value={custom ? null : range}
+      onChange={selectPreset}
       anchor={anchorControls}
       filters={
         <MultiSelect
@@ -213,8 +251,8 @@ export default function App() {
   const { x } = block
   const tokens = shown.tokens
   const cost = shown.cost
-  const from = fmtX.tick(x[0])
-  const to = fmtX.tick(x[x.length - 1])
+  const from = extentLabel(x[0])
+  const to = extentLabel(x[x.length - 1])
   const rowStamp = (i: number) => labelAt(x[i])
 
   const tokenCumulative = runningTotal(shown.tokenTotals)
@@ -244,7 +282,8 @@ export default function App() {
     const d = delta(now, before)
     // Direction and magnitude only. More spend is not inherently good or bad,
     // so colouring the arrow would assert a judgement the number cannot make.
-    return d ? { ...d, vs: `vs previous ${range}` } : undefined
+    const period = custom ? plural(rangeDays(custom), 'day') : range
+    return d ? { ...d, vs: `vs previous ${period}` } : undefined
   }
 
   const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
@@ -314,7 +353,7 @@ export default function App() {
 
       {comparable ? null : (
         <p className="page__hint">
-          No period comparison here: the {range} before this one is older than
+          No period comparison here: the {custom ? plural(rangeDays(custom), 'day') : range} before this one is older than
           Airia's {RETENTION_DAYS}-day retention, so there is nothing left to compare against.
         </p>
       )}
@@ -597,6 +636,16 @@ export default function App() {
       <PaletteSheet />
     </div>
   )
+}
+
+/** "1 day", "31 days" — a count always reads beside its unit. */
+const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? '' : 's'}`
+
+/** Civil-day arithmetic for the one place App needs it. */
+const addDaysISO = (day: string, n: number): string => {
+  const d = new Date(`${day}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
 }
 
 /** "15 min", "2 hr", "1 day" — however the range's buckets are sized. */

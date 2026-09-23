@@ -201,29 +201,95 @@ because those durations are whole numbers of days and plain arithmetic moves
 them an hour across a DST change — visible on 7D, where the last bar is two
 hours wide.
 
-### The calendar picks a DAY, and only the end
+### A preset always means "ending now"
+
+Clicking 24H/7D/14D/1M/3M discards the anchor and any custom range and
+jumps to the live window — including re-clicking the preset that is already
+selected, which is the natural "put it back" gesture. A preset that kept
+the old anchor made the buttons mean two things at once: how long the
+window is, and, invisibly, where it still sits.
+
+### The calendar picks a RANGE, in whole days
 
 `Calendar.tsx` is a month view; `TimeRangeBar` hangs it off the anchor
-control. Three rules:
+control. It speaks civil days (`YYYY-MM-DD`) and nothing else:
 
-- **It speaks civil days (`YYYY-MM-DD`), never instants.** All its arithmetic
-  is UTC-based, which is exact, because a civil calendar is the same
-  everywhere: September has 30 days in Sydney and in Reykjavik. Turning a day
-  into an instant is `endOfDay()` in `data/airia.ts`, the only place that
-  knows the zone the buckets were aligned to.
-- **Picking a day snaps the window to the bucket grid.** The window ends at
-  that local midnight, which every bucket size divides, so both ends land on
-  the grid the bars do: 3M ends with a whole day, 1M with its PM half, 24H
-  with its last quarter hour — and all of them *start* on a local midnight.
-  Verified across all five ranges.
-- **No independent start date.** Duration stays with the range buttons. The
-  days from the resolved start to the selection are banded in the grid so
-  that is visible; picking today returns to the live window rather than
-  freezing at tonight's midnight.
+- **Its arithmetic is UTC-based**, which is exact rather than sloppy,
+  because a civil calendar is the same everywhere — September has 30 days in
+  Sydney and in Reykjavik. Turning a day into an instant is `customSpec()`
+  in `data/airia.ts`, the only place that knows the zone.
+- **From is midnight, To is the last millisecond of the closing day**, both
+  in `ZONE`. Verified across the offset change: 10 January resolves to
+  13:00Z, 10 September to 14:00Z — the same local midnight either side of
+  daylight saving, which UTC-based bounds would have got wrong by an hour.
+- **No time of day, ever.** A window shorter than a day is what the 24H
+  preset is for, and two controls answering one question is how a picker
+  becomes a puzzle.
+- **Two clicks.** First arms the start, the pointer previews the span, the
+  second applies it immediately — no Apply button. The same day twice is a
+  single day. Click order is irrelevant; the ends resolve low-to-high. After
+  a completed range the next click starts a new one.
+- **An invalid range is never expressible.** The span cap and the retention
+  floor are enforced by DISABLING days — once a start is down, anything
+  more than a year from it greys out — so there is nothing to validate and
+  nothing to reject.
 
-`localMidnight()` anchors on local NOON and lets `floor()` walk back, because
-noon is never within an hour of a DST transition and so needs only one offset
-lookup to land inside the right day.
+A custom range and a preset are mutually exclusive: choosing one clears the
+other, and no preset is pressed while a drawn range is showing. The
+chevrons work in both modes, stepping by the window's own length.
+
+### Grain follows the span
+
+`grainFor()` in `aggregate.ts` picks the bucket size for a custom range off
+a ladder: 15m, 30m, 1h, 2h, 3h, 4h, 6h, 12h, then 1–4 days. Every sub-day
+rung DIVIDES a day, so buckets still land on local midnight; every day-scale
+rung is whole days. Nothing in between — a 36-hour bucket cannot be aligned
+to local time at all.
+
+The rule is "the finest grain under 100 bars, unless that drops below 60, in
+which case take the finer one's overshoot": too few fat bars reads worse
+than a few too many thin ones. Measured over every span from one day to a
+year it stays between 60 and 118 bars.
+
+**It reproduces each preset's hand-chosen grain exactly** — 1 day picks
+15 min, 7 days 2 hours, 14 days 4 hours, 30 days 12 hours, 90 days 1 day —
+so a custom range matching a preset draws the same chart. That is what
+keeps the two modes comparable, and it is why 8h is deliberately NOT on the
+ladder: it would have given a 30-day custom range a different grain from
+the 1M preset over the same span.
+
+At the one-year cap the grain is 4 days (92 bars). A week would undershoot
+to ~52, which is exactly the clunkiness the floor exists to prevent.
+
+### One fold, six windows
+
+A custom range is not a second pipeline. `aggregate()` takes an optional
+`CustomSpec` and folds it in the SAME pass as the five presets, out of the
+same sparse fact table — so the user filter, both breakdowns, isolation and
+the period comparison all work on it without knowing it is custom. Its
+comparison period is the equal-length span immediately before, measured in
+DAYS so a daylight-saving change cannot make it an hour longer than the
+window it is compared against.
+
+### Placing a row: slots, not floors
+
+Rows find their bar by WALL-CLOCK SLOT — `Z.slot(t, size)` — for every
+window built by `dayGrid`, which is the calendar ranges and any custom one.
+That is how the grid defines its boundaries, so the two agree by
+construction.
+
+`Z.floor` cannot do this job. On the night the clocks go back it lands on a
+boundary that is not in the grid, so **rows in the last hour of that day
+were silently dropped** — measured: a row at 5 Apr 23:30 floors to "5 Apr
+23:00", which is nothing. It also cannot express a multi-day grain at all,
+since flooring to a 2-day multiple aligns to the epoch rather than to the
+window. Whole-day grains therefore index every civil day they cover,
+stopping at the window's end so a row just past it cannot land in the last
+bar.
+
+The counted presets (24H, 7D, 14D) still use the original instant-keyed
+lookup and are untouched by this — including the April defect noted under
+**Don't walk the grid backwards**, which still applies to them.
 
 ## Never go back to the key gate mid-session
 

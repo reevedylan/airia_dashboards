@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RangeKey } from '../components'
 import {
   aggregate, earliestBoundary, prefetchBoundary, isCalendar, makeZone, calendarStartDay,
-  RANGE_SPECS, SERVICE_KEY, type AggregateResult,
+  customWindow, grainFor, RANGE_SPECS, SERVICE_KEY,
+  type AggregateResult, type CustomSpec, type RangeMap,
 } from '../lib/airia/aggregate'
-import { addDays, addMonths, type Day } from '../lib/day'
+import { addDays, addMonths, spanDays, type Day } from '../lib/day'
 import { fetchAll, probe, AuthError, BACKGROUND_CONCURRENCY, type Progress } from '../lib/airia/fetchAll'
 import type { RawRow } from '../lib/airia/aggregate'
 
@@ -58,7 +59,13 @@ import type { RangeBlock } from '../lib/airia/aggregate'
 
 export interface AiriaData {
   meta: AiriaMeta
-  ranges: Record<RangeKey, RangeBlock>
+  ranges: RangeMap
+}
+
+/** A custom window as the calendar produces it: two civil days, inclusive. */
+export interface DayRange {
+  from: Day
+  to: Day
 }
 
 /**
@@ -158,6 +165,31 @@ export function endOfDay(day: Day): number {
   return Z.midnight(y, m, d + 1) - 1
 }
 
+/** The instant a local day BEGINS — midnight, in the data's zone. */
+export function startOfDay(day: Day): number {
+  const [y, m, d] = day.split('-').map(Number)
+  return Z.midnight(y, m, d)
+}
+
+/**
+ * Resolve a picked pair of days into the window the fold needs.
+ *
+ * Whole local days, always: midnight on the first to the last millisecond
+ * of the last. The grain is derived from the span rather than chosen —
+ * see `grainFor` — so the chart keeps a readable bar count from one day to
+ * a year without anyone picking a bucket size.
+ */
+export function customSpec({ from, to }: DayRange): CustomSpec {
+  const a = from <= to ? from : to
+  const b = from <= to ? to : from
+  const start = startOfDay(a)
+  const end = endOfDay(b)
+  return { from: start, to: end, bucketMs: grainFor(end - start + 1) }
+}
+
+/** Days in a picked range, counted inclusively. */
+export const rangeDays = ({ from, to }: DayRange): number => spanDays(from, to)
+
 /**
  * Move a window anchor by `ms`, keeping it on the local-day grid if it was
  * already there.
@@ -179,8 +211,8 @@ function slideAnchor(from: number, ms: number): number {
   return (end - below <= above - end ? below : above) - 1
 }
 
-/** How many whole days a fixed-count range spans. */
-const spanDays = (range: RangeKey): number => {
+/** How many whole days a fixed-count preset spans. */
+const presetDays = (range: RangeKey): number => {
   const spec = RANGE_SPECS[range]
   return isCalendar(spec) ? 0 : (spec.count * spec.bucketMs) / DAY_MS
 }
@@ -199,7 +231,7 @@ export function oldestEndDay(range: RangeKey): Day {
   return isCalendar(spec)
     // The inverse of calendarStartDay: the end day whose window starts here.
     ? addDays(addMonths(floor, spec.months), -1)
-    : addDays(floor, spanDays(range) - 1)
+    : addDays(floor, presetDays(range) - 1)
 }
 
 /** Clamp an anchor into the selectable range — used when the range changes
@@ -228,10 +260,28 @@ export function stepWindow(range: RangeKey, from: number | null, dir: -1 | 1): n
   return clampAnchor(range, next)
 }
 
+/**
+ * Slide a custom range by its own length, keeping it whole.
+ *
+ * The chevrons mean the same thing in both modes — the window before or
+ * after this one — so a custom range steps by its own span rather than
+ * doing nothing. Clamped at both ends: never past today, never past
+ * retention, and never silently resized.
+ */
+export function stepRange(range: DayRange, dir: -1 | 1): DayRange {
+  const days = rangeDays(range)
+  const shifted = { from: addDays(range.from, dir * days), to: addDays(range.to, dir * days) }
+  const floor = dayOf(retentionFloor())
+  const today = dayOf(Date.now())
+  if (shifted.from < floor) return { from: floor, to: addDays(floor, days - 1) }
+  if (shifted.to > today) return { from: addDays(today, -(days - 1)), to: today }
+  return shifted
+}
+
 /** The first day of the window a given range would show ending on `day`. */
 export function windowStartDay(range: RangeKey, day: Day): Day {
   const spec = RANGE_SPECS[range]
-  return isCalendar(spec) ? calendarStartDay(day, spec.months) : addDays(day, -(spanDays(range) - 1))
+  return isCalendar(spec) ? calendarStartDay(day, spec.months) : addDays(day, -(presetDays(range) - 1))
 }
 
 /**
@@ -269,7 +319,11 @@ function rowsBetween(rows: readonly RawRow[], from: number, to: number): readonl
  * Nothing is persisted: no server, no tenant data on disk, and the key lives
  * only in this tab.
  */
-export function useAiriaLive(key: string | null, anchor: number | null): LoadState {
+export function useAiriaLive(
+  key: string | null,
+  anchor: number | null,
+  custom: DayRange | null = null,
+): LoadState {
   const [state, setState] = useState<LoadState>({ status: 'idle', data: null })
   const run = useRef(0)
   /** Raw rows kept so a different anchor is a re-fold, not a re-fetch. */
@@ -335,7 +389,11 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
            the end of retention, and asking for it fetches months of
            nothing. */
         const floor = wallNow - RETENTION_MS
-        const needFrom = Math.max(earliestBoundary(at, ZONE), floor)
+        /* A custom window reaches wherever it was drawn, and its own
+           comparison period reaches an equal span before that. */
+        const spec = custom ? customSpec(custom) : null
+        const customFrom = spec ? customWindow(Z, spec).prevFrom : Infinity
+        const needFrom = Math.max(Math.min(earliestBoundary(at, ZONE), customFrom), floor)
 
         if (cache.current?.key !== key) {
           cache.current = null
@@ -396,7 +454,7 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
         show({ message: 'Aggregating…' })
         // Yield a frame so the message paints before a synchronous fold.
         await new Promise((r) => requestAnimationFrame(() => r(null)))
-        const agg: AggregateResult = aggregate(rows, { now: at, zone: ZONE, source: 'Gateway' })
+        const agg: AggregateResult = aggregate(rows, { now: at, zone: ZONE, source: 'Gateway', custom: spec })
         if (!live()) return
 
         held.current = {
@@ -420,7 +478,7 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
             serviceKeyLabel: SERVICE_KEY,
             warnings: agg.stats.warnings,
           },
-          ranges: agg.ranges as AiriaData['ranges'],
+          ranges: agg.ranges,
         }
         setState({ status: 'ready', data: held.current, history: history(cache.current!.from > floor) })
 
@@ -498,7 +556,10 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
     })()
 
     return () => { ctrl.abort() }
-  }, [key, anchor])
+    // Depends on the custom range's ENDS, not its object identity, so a
+    // re-render with an equal range does not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, anchor, custom?.from, custom?.to])
 
   return state
 }

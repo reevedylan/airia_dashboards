@@ -45,3 +45,10 @@ export function addMonths(day: Day, n: number): Day {
 }
 
 export const monthOf = (day: Day): string => day.slice(0, 7)
+
+/** Whole days from `a` to `b`; negative when `b` is earlier. */
+export const daysBetween = (a: Day, b: Day): number =>
+  Math.round((dayDate(b).getTime() - dayDate(a).getTime()) / 86_400_000)
+
+/** Days in the inclusive span `a`..`b`, which is what a date range means. */
+export const spanDays = (a: Day, b: Day): number => Math.abs(daysBetween(a, b)) + 1

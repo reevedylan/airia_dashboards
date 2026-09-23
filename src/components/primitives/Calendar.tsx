@@ -1,111 +1,112 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { addDays, addMonths, dayDate, monthOf, spanDays, type Day } from '../../lib/day'
 
 /**
- * A month-view calendar that speaks CIVIL DAYS, never instants.
+ * A month-view calendar that picks a RANGE of civil days.
  *
- * Every value in and out is an ISO `YYYY-MM-DD` string, and every bit of
- * arithmetic below runs on UTC dates — which is exact, because a civil
- * calendar is the same in every zone: September has 30 days in Sydney and in
- * Reykjavik, and the 22nd is a Tuesday in both.
+ * Days, never instants: everything in and out is `YYYY-MM-DD`, and the
+ * arithmetic behind it is UTC-based, which is exact rather than approximate
+ * because a civil calendar is the same in every zone — September has 30
+ * days in Sydney and in Reykjavik, and the 22nd is a Tuesday in both.
  *
- * Turning a chosen day into an instant is the caller's job, and has to be:
- * only the caller knows which zone the data's buckets were aligned to, and
- * "the end of the 22nd" is a different moment in each one.
+ * Turning a day into a moment is the caller's job, and has to be: only the
+ * caller knows which zone the data's buckets were aligned to, and "the end
+ * of the 22nd" is a different instant in each one.
+ *
+ * There is deliberately no time of day. A window shorter than a day is what
+ * the 24H preset is for, and two controls answering the same question is
+ * how a picker becomes a puzzle.
  */
 export interface CalendarProps {
-  /** The selected day. */
-  value: string
-  /** Latest selectable day — later days render disabled. */
-  max?: string
-  /** Earliest selectable day. */
-  min?: string
-  /**
-   * First day of the window this selection resolves to. Days from here to
-   * `value` are banded, so the duration the range buttons chose is visible
-   * while you pick where it ends.
-   */
-  from?: string
-  /** Today, for the "today" marker and the shortcut. Defaults to `max`. */
-  today?: string
-  onPick: (day: string) => void
-  /** Standing text under the grid — what a click will actually select. */
+  /** The window currently on screen, banded for context. */
+  value: { from: Day; to: Day } | null
+  /** Earliest and latest selectable days. */
+  min?: Day
+  max?: Day
+  /** Longest selectable span, counted inclusively. */
+  maxSpanDays?: number
+  /** Today, for the marker and the "this month" shortcut. Defaults to `max`. */
+  today?: Day
+  /** Both ends, resolved low-to-high whichever order they were clicked. */
+  onSelect: (from: Day, to: Day) => void
+  /** Standing text under the grid, shown when no selection is in progress. */
   note?: React.ReactNode
-  /** Accessible name for the dialog. */
   label?: string
 }
 
-/* --------------------------------------------------------- civil dates -- */
-
-const pad = (n: number) => String(n).padStart(2, '0')
-const iso = (d: Date) => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
-/** UTC midnight of a civil day — a handle for arithmetic, not an instant. */
-const at = (day: string) => new Date(`${day}T00:00:00Z`)
-const shift = (day: string, days: number) => {
-  const d = at(day)
-  d.setUTCDate(d.getUTCDate() + days)
-  return iso(d)
-}
-const monthOf = (day: string) => day.slice(0, 7)
-const shiftMonth = (day: string, months: number) => {
-  const d = at(day)
-  const target = d.getUTCMonth() + months
-  // Clamp rather than roll over: 31 Mar back a month is 28 Feb, not 3 Mar.
-  const last = new Date(Date.UTC(d.getUTCFullYear(), target + 1, 0)).getUTCDate()
-  return iso(new Date(Date.UTC(d.getUTCFullYear(), target, Math.min(d.getUTCDate(), last))))
-}
-
-/** Six weeks from the Monday on or before the 1st — a grid that never reflows. */
-function grid(month: string): string[] {
-  const first = `${month}-01`
-  const dow = (at(first).getUTCDay() + 6) % 7          // Monday = 0
-  const start = shift(first, -dow)
-  return Array.from({ length: 42 }, (_, i) => shift(start, i))
-}
-
-/* Dates are formatted in UTC because the strings above ARE civil dates: any
-   other zone would shift them by a day at the edges. */
+/* Formatted in UTC because these strings ARE civil dates: any other zone
+   would shift them by a day at the edges. */
 const fmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...opts })
 const MONTH_YEAR = fmt({ month: 'long', year: 'numeric' })
 const FULL_DAY = fmt({ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+const SHORT_DAY = fmt({ day: 'numeric', month: 'short', year: 'numeric' })
 const WEEKDAYS = (() => {
-  const narrow = fmt({ weekday: 'short' })
+  const short = fmt({ weekday: 'short' })
   // 2024-01-01 was a Monday; the week starts there to match en-GB/en-AU.
-  return Array.from({ length: 7 }, (_, i) => narrow.format(at(shift('2024-01-01', i))))
+  return Array.from({ length: 7 }, (_, i) => short.format(dayDate(addDays('2024-01-01', i))))
 })()
 
 /** "22 Sept 2026" — the same civil day the calendar deals in. */
-export const dayLabel = (day: string, style: 'short' | 'long' = 'short'): string =>
-  (style === 'long' ? FULL_DAY : fmt({ day: 'numeric', month: 'short', year: 'numeric' })).format(at(day))
+export const dayLabel = (day: Day, style: 'short' | 'long' = 'short'): string =>
+  (style === 'long' ? FULL_DAY : SHORT_DAY).format(dayDate(day))
 
-/* ------------------------------------------------------------ calendar -- */
+/** Six weeks from the Monday on or before the 1st — a grid that never reflows. */
+function grid(month: string): Day[] {
+  const first = `${month}-01`
+  const dow = (dayDate(first).getUTCDay() + 6) % 7          // Monday = 0
+  return Array.from({ length: 42 }, (_, i) => addDays(first, i - dow))
+}
 
-export function Calendar({ value, max, min, from, today = max, onPick, note, label = 'Choose a date' }: CalendarProps) {
-  const [month, setMonth] = useState(() => monthOf(value))
-  /** Roving focus. Keyboard moves this; a click just picks. */
-  const [cursor, setCursor] = useState(value)
+const lo = (a: Day, b: Day) => (a <= b ? a : b)
+const hi = (a: Day, b: Day) => (a <= b ? b : a)
+
+export function Calendar({
+  value, min, max, maxSpanDays = 365, today = max, onSelect, note, label = 'Choose a date range',
+}: CalendarProps) {
+  /** The first click of a two-click selection. Null between selections. */
+  const [pending, setPending] = useState<Day | null>(null)
+  const [preview, setPreview] = useState<Day | null>(null)
+  const [month, setMonth] = useState(() => monthOf(value?.to ?? today ?? '2026-01-01'))
+  const [cursor, setCursor] = useState<Day>(value?.to ?? today ?? '2026-01-01')
   const gridRef = useRef<HTMLDivElement>(null)
   const moved = useRef(false)
 
-  // Follow the selection when it changes underneath us (stepping the window
-  // with the popover open), but never fight the keyboard mid-navigation.
-  useEffect(() => { setCursor(value); setMonth(monthOf(value)) }, [value])
+  // Follow the window when it changes underneath us — stepping it with the
+  // popover open — but never mid-selection, which would move the anchor
+  // someone is currently measuring from.
+  useEffect(() => {
+    if (pending || !value) return
+    setCursor(value.to)
+    setMonth(monthOf(value.to))
+  }, [value?.from, value?.to]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const days = useMemo(() => grid(month), [month])
-  const blocked = (day: string) => (max != null && day > max) || (min != null && day < min)
 
-  // Only steal focus once the keyboard has been used, so opening the popover
-  // with the mouse does not yank focus off the trigger.
+  /**
+   * A day is unpickable if it is outside the source's retention, in the
+   * future, or — once a start is down — further from it than a whole year.
+   * Disabling rather than validating on submit: an invalid range should
+   * never be expressible, so there is nothing to reject.
+   */
+  const blocked = (day: Day) =>
+    (min != null && day < min) ||
+    (max != null && day > max) ||
+    (pending != null && spanDays(pending, day) > maxSpanDays)
+
+  // Only steal focus once the keyboard has been used, so opening with the
+  // mouse does not yank focus off the trigger.
   useEffect(() => {
     if (!moved.current) return
     gridRef.current?.querySelector<HTMLButtonElement>('[data-cursor]')?.focus()
   }, [cursor])
 
-  const move = (days: number) => {
-    const next = shift(cursor, days)
+  const move = (by: number) => {
+    const next = addDays(cursor, by)
     if (blocked(next)) return
     moved.current = true
     setCursor(next)
     setMonth(monthOf(next))
+    if (pending) setPreview(next)
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -113,31 +114,37 @@ export function Calendar({ value, max, min, from, today = max, onPick, note, lab
     if (e.key in step) { e.preventDefault(); move(step[e.key]); return }
     if (e.key === 'PageUp' || e.key === 'PageDown') {
       e.preventDefault()
-      const next = shiftMonth(cursor, e.key === 'PageUp' ? -1 : 1)
-      if (!blocked(next)) { moved.current = true; setCursor(next); setMonth(monthOf(next)) }
+      const next = addMonths(cursor, e.key === 'PageUp' ? -1 : 1)
+      if (!blocked(next)) { moved.current = true; setCursor(next); setMonth(monthOf(next)); if (pending) setPreview(next) }
     }
   }
 
-  const stepMonth = (by: number) => setMonth(monthOf(shiftMonth(`${month}-01`, by)))
-  // A month is reachable if any day in it is: its last day is on or after
-  // `min`, its first on or before `max`.
-  const prevBlocked = min != null && shift(`${month}-01`, -1) < min
-  const nextBlocked = max != null && `${monthOf(shiftMonth(`${month}-01`, 1))}-01` > max
+  /** First click arms the range; second completes it and applies at once. */
+  const pick = (day: Day) => {
+    setCursor(day)
+    if (pending == null) { setPending(day); setPreview(day); return }
+    setPending(null)
+    setPreview(null)
+    onSelect(lo(pending, day), hi(pending, day))
+  }
+
+  // What to band: the selection being drawn, or the window on screen.
+  const band = pending != null
+    ? { from: lo(pending, preview ?? pending), to: hi(pending, preview ?? pending) }
+    : value
+
+  const stepMonth = (by: number) => setMonth(monthOf(addMonths(`${month}-01`, by)))
+  const prevBlocked = min != null && addDays(`${month}-01`, -1) < min
+  const nextBlocked = max != null && `${monthOf(addMonths(`${month}-01`, 1))}-01` > max
 
   return (
     <div className="viz-cal" role="dialog" aria-label={label}>
       <div className="viz-cal__head">
-        <button
-          type="button" className="viz-cal__nav" disabled={prevBlocked}
-          aria-label="Previous month" onClick={() => stepMonth(-1)}
-        >
+        <button type="button" className="viz-cal__nav" disabled={prevBlocked} aria-label="Previous month" onClick={() => stepMonth(-1)}>
           <Chevron dir="left" />
         </button>
-        <span className="viz-cal__month" aria-live="polite">{MONTH_YEAR.format(at(`${month}-01`))}</span>
-        <button
-          type="button" className="viz-cal__nav" disabled={nextBlocked}
-          aria-label="Next month" onClick={() => stepMonth(1)}
-        >
+        <span className="viz-cal__month" aria-live="polite">{MONTH_YEAR.format(dayDate(`${month}-01`))}</span>
+        <button type="button" className="viz-cal__nav" disabled={nextBlocked} aria-label="Next month" onClick={() => stepMonth(1)}>
           <Chevron dir="right" />
         </button>
       </div>
@@ -149,13 +156,21 @@ export function Calendar({ value, max, min, from, today = max, onPick, note, lab
       {/* A plain group of buttons, not role="grid": a grid without real rows
           reads worse to a screen reader than no grid at all, and every day
           already carries its full date as its label. */}
-      <div className="viz-cal__grid" ref={gridRef} role="group" onKeyDown={onKeyDown}>
+      <div
+        className="viz-cal__grid"
+        ref={gridRef}
+        role="group"
+        onKeyDown={onKeyDown}
+        onPointerLeave={() => { if (pending) setPreview(pending) }}
+      >
         {days.map((day) => {
-          const out = monthOf(day) !== month
           const off = blocked(day)
-          // The band shows the window the range buttons chose, so it is
-          // obvious that a click moves a fixed duration rather than an edge.
-          const inWindow = from != null && day >= from && day <= value
+          const inBand = band != null && day >= band.from && day <= band.to
+          const edge = !inBand || band == null ? undefined
+            : band.from === band.to ? 'only'
+            : day === band.from ? 'start'
+            : day === band.to ? 'end'
+            : undefined
           return (
             <button
               key={day}
@@ -164,26 +179,34 @@ export function Calendar({ value, max, min, from, today = max, onPick, note, lab
               disabled={off}
               tabIndex={day === cursor ? 0 : -1}
               data-cursor={day === cursor ? '' : undefined}
-              data-outside={out ? '' : undefined}
+              data-outside={monthOf(day) !== month ? '' : undefined}
               data-today={day === today ? '' : undefined}
-              data-window={inWindow ? '' : undefined}
-              data-selected={day === value ? '' : undefined}
-              aria-pressed={day === value}
+              data-window={inBand ? '' : undefined}
+              data-edge={edge}
+              data-pending={pending === day ? '' : undefined}
+              aria-pressed={inBand}
               aria-label={dayLabel(day, 'long')}
-              onClick={() => { setCursor(day); onPick(day) }}
+              onClick={() => pick(day)}
+              onPointerEnter={() => { if (pending) setPreview(day) }}
             >
-              {at(day).getUTCDate()}
+              {dayDate(day).getUTCDate()}
             </button>
           )
         })}
       </div>
 
       <div className="viz-cal__foot">
-        {note ? <p className="viz-cal__note">{note}</p> : null}
+        <p className="viz-cal__note">
+          {pending != null
+            ? <>From <strong>{dayLabel(pending)}</strong> — now pick the end day. Up to {maxSpanDays} days; the same day again is a single day.</>
+            : note}
+        </p>
         {today ? (
           <button
             type="button" className="viz-cal__todaybtn"
-            disabled={value === today} onClick={() => onPick(today)}
+            disabled={monthOf(today) === month}
+            aria-label="Go to this month"
+            onClick={() => setMonth(monthOf(today))}
           >
             Today
           </button>

@@ -102,6 +102,7 @@ the window happens to be:
 | 14D | 4 hr | 14 days | 84 |
 | 1M | 12 hr | 1 calendar month | 56–62 |
 | 3M | 1 day | 3 calendar months | 89–92 |
+| custom | 15 min – 4 days | 1 day – 1 year | 60–118 |
 
 **1M and 3M are measured in calendar months, not in days**, because a month
 isn't 30 days. A 1M window ending 3 April starts on 4 March; a 3M window
@@ -119,34 +120,35 @@ every Australian day in half. Daylight saving is handled.
 
 ### Moving the window
 
-Duration and position are separate controls. The range buttons pick how long a
-window is; the chevrons step it back or forward by its own length, and the
-calendar jumps to "this duration, ending on that day". Forward is disabled at
-the live window — you can't step into the future.
+Duration and position are separate controls. The range buttons pick how long
+a window is; the chevrons step it back or forward by its own length. Clicking
+a preset **always jumps to now** — it discards wherever the window had been
+moved to, including when you re-click the preset already selected, which is
+the obvious way to get back to the present.
+
+### Picking your own range
+
+The calendar picks a start and an end: click a day, the span previews as you
+move, click again to apply. The same day twice is a single day, and it does
+not matter which end you click first. Whole days only, in `Australia/Sydney`
+— from midnight to 23:59:59 — because a window shorter than a day is what
+the 24H preset is for.
 
 You can go back a year and no further: Airia's logs expire at 365 days, so
-the back chevron stops and the calendar greys out anything earlier. The
-limit applies to the whole window rather than the date you click — a 3M
-window ending one day inside retention would be two-thirds empty — so the
-oldest 3M window you can select ends about 275 days ago. Near that edge the
-period comparison disappears and says why: the window before it has expired,
-and a comparison against missing rows would report a rise that is really a
-deletion.
+anything earlier is greyed out, and once a start is down anything more than
+a year away from it greys out too. An invalid range is never selectable
+rather than rejected after the fact.
 
-The calendar is a month view that picks a **day**, not an instant, so the
-window lands on the same grid the bars do: it ends when that local day ends,
-which every bucket size divides. On 3M the last bar is that whole day, on 1M
-its afternoon, on 24H its last quarter hour — and every window starts on a
-local midnight. There is deliberately no second date field: the duration
-belongs to the range buttons, and a dragged span would make the bucket size
-depend on how wide you happened to drag. The days the window covers are
-banded in the grid so that relationship is visible while you pick.
+**The bar size follows the span.** A custom range picks its own grain off a
+ladder — 15 min through 12 hours, then 1 to 4 days — aiming for 60 to 100
+bars, so a day of traffic and a year of it are both readable without anyone
+choosing a bucket size. The ladder reproduces each preset's own grain
+exactly, so a custom 7-day range draws the same chart as the 7D button.
 
-Whenever the window isn't the live one, the resolved range is shown beside the
-buttons with a **Jump to now** link, so it is always obvious when you're
-looking at history.
+A preset and a custom range are alternatives: choosing one clears the other,
+and the resolved window is always spelled out next to the control.
 
-Stepping is instant: raw rows are cached, so a new anchor is a re-fold
+Stepping is instant: raw rows are cached, so a new window is a re-fold
 (~0.4s) rather than a re-fetch. The first load fetches the six months the
 ranges themselves need; the background then reaches for what *one step back*
 needs — three months further still, because that window has its own

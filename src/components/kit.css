@@ -531,6 +531,10 @@
 }
 .viz-anchor__date:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
 .viz-anchor__date[aria-expanded='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
+/* A drawn range is not one of the presets, so the control says so rather
+   than looking like a preset that happens to be unhighlighted. */
+.viz-anchor__date[data-custom] { background: var(--viz-seq-100); color: var(--viz-seq-700); }
+.viz-anchor__date[data-custom]:hover { background: var(--viz-seq-200); }
 /* Tabular figures and a floor width, so the toolbar does not twitch sideways
    as the date changes under the chevrons. */
 .viz-anchor__daylabel {
@@ -553,6 +557,11 @@
 }
 .viz-anchor__resolved { transition: opacity var(--viz-dur-base) var(--viz-ease); }
 .viz-anchor__resolved[data-stale] { opacity: 0.45; transition-delay: var(--viz-dur-grace); }
+.viz-anchor__tag {
+  font: 700 9.5px/1 var(--viz-font); letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 3px 5px; border-radius: 4px;
+  background: var(--viz-seq-700); color: var(--viz-page);
+}
 .viz-anchor__resolved button {
   font: 600 12px/1 var(--viz-font); color: var(--viz-seq-700);
   background: none; border: 0; cursor: pointer; text-decoration: underline; padding: 2px;
@@ -593,30 +602,40 @@
   font: 500 10.5px/1 var(--viz-font); color: var(--viz-text-muted);
 }
 .viz-cal__day {
+  position: relative;
   display: grid; place-items: center; height: 30px;
   font: 500 12px/1 var(--viz-font);
   font-variant-numeric: tabular-nums;
   color: var(--viz-text-primary);
-  background: none; border: 0; border-radius: 6px; cursor: pointer;
+  background: none; border: 0; border-radius: 0; cursor: pointer;
   transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
 }
-.viz-cal__day:hover:not(:disabled) { background: var(--viz-surface-hover); }
+.viz-cal__day:hover:not(:disabled) { background: var(--viz-surface-hover); border-radius: 6px; }
 .viz-cal__day:disabled { opacity: 0.25; cursor: default; }
 .viz-cal__day[data-outside] { color: var(--viz-text-muted); }
-/* The band is the window the range buttons chose. Showing it makes plain
-   that a click moves a fixed duration rather than dragging an edge. */
-.viz-cal__day[data-window] { background: var(--viz-seq-100); color: var(--viz-text-primary); border-radius: 0; }
-.viz-cal__day[data-window]:hover:not(:disabled) { background: var(--viz-seq-200); }
-.viz-cal__day[data-today] { box-shadow: inset 0 0 0 1px var(--viz-axis); }
-/* The deepest step of the ramp, inked with --viz-page: that pair inverts
-   correctly in both modes — pale ink on a dark fill in light mode, dark ink
-   on a pale fill in dark mode — where --viz-text-primary would not. */
-.viz-cal__day[data-selected] {
-  background: var(--viz-seq-700); color: var(--viz-page);
-  font-weight: 700; border-radius: 6px;
+
+/* The band is the selected range — or, mid-selection, the one the pointer
+   is drawing. Square through the middle so consecutive days read as one
+   continuous span, rounded only at its two ends. */
+.viz-cal__day[data-window] { background: var(--viz-seq-100); color: var(--viz-text-primary); }
+.viz-cal__day[data-window]:hover:not(:disabled) { background: var(--viz-seq-200); border-radius: 0; }
+.viz-cal__day[data-edge='start'] { border-radius: 6px 0 0 6px; }
+.viz-cal__day[data-edge='end'] { border-radius: 0 6px 6px 0; }
+.viz-cal__day[data-edge='only'] { border-radius: 6px; }
+
+/* Both ends are filled, with --viz-page as the ink: that pair inverts
+   correctly in both modes — pale on a dark fill in light mode, dark on a
+   pale fill in dark mode — where --viz-text-primary would not. */
+.viz-cal__day[data-edge] {
+  background: var(--viz-seq-700); color: var(--viz-page); font-weight: 700;
 }
-.viz-cal__day[data-selected]:hover:not(:disabled) { background: var(--viz-seq-600); }
-.viz-cal__day:focus-visible { outline: 2px solid var(--viz-focus); outline-offset: -2px; }
+.viz-cal__day[data-edge]:hover:not(:disabled) { background: var(--viz-seq-600); }
+
+/* The first click of a pair, before the second lands. */
+.viz-cal__day[data-pending] { box-shadow: inset 0 0 0 2px var(--viz-focus); }
+
+.viz-cal__day[data-today]:not([data-edge]) { box-shadow: inset 0 0 0 1px var(--viz-axis); }
+.viz-cal__day:focus-visible { outline: 2px solid var(--viz-focus); outline-offset: -2px; z-index: 1; }
 
 .viz-cal__foot {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -627,6 +646,7 @@
   margin: 0; flex: 1;
   font: 400 11px/1.4 var(--viz-font); color: var(--viz-text-muted);
 }
+.viz-cal__note strong { color: var(--viz-text-secondary); font-weight: 600; }
 .viz-cal__todaybtn {
   flex-shrink: 0;
   font: 600 11.5px/1 var(--viz-font); color: var(--viz-seq-700);

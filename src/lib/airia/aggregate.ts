@@ -1,4 +1,4 @@
-import { addDays, addMonths, dayISO, dayParts, type Day } from '../day'
+import { addDays, addMonths, dayISO, dayParts, spanDays, type Day } from '../day'
 
 /**
  * Turns raw AIOperationExecutions rows into the sparse fact table the
@@ -173,7 +173,10 @@ export function makeZone(zone: string) {
    */
   const dayGrid = (size: number, from: Day, to: Day): number[] => {
     const out: number[] = []
-    for (let day = from; day <= to; day = addDays(day, 1)) {
+    // A grain of whole days steps the calendar; anything finer divides each
+    // day from its own midnight.
+    const stride = size >= 86_400_000 ? Math.round(size / 86_400_000) : 1
+    for (let day = from; day <= to; day = addDays(day, stride)) {
       const { y, m, d } = dayParts(day)
       const next = midnight(y, m, d + 1)
       out.push(midnight(y, m, d))
@@ -201,6 +204,21 @@ export function makeZone(zone: string) {
     return floor(noon - offsetAt(noon), 86_400_000)
   }
 
+  /**
+   * Which `size`-sized slot of LOCAL wall-clock time `t` falls in.
+   *
+   * The counterpart to `dayGrid`, which places bucket starts at wall-clock
+   * multiples of the size: this says which of those a row belongs to, and
+   * agrees with it by construction. Exact on a transition day because the
+   * offset used is the true one at `t` — where `floor` has to guess a
+   * boundary and can land on one that does not exist, dropping rows in the
+   * last hour of the night the clocks go back.
+   *
+   * Only meaningful for a size that divides a day. Whole-day grains slot by
+   * day and index from there.
+   */
+  const slot = (t: number, size: number): number => Math.floor((t + offsetAt(t)) / size)
+
   /** The civil date `t` falls on, in this zone. */
   const civil = (t: number): Day => {
     const p: Record<string, string> = {}
@@ -210,7 +228,7 @@ export function makeZone(zone: string) {
     return dayISO(+p.year, +p.month, +p.day)
   }
 
-  return { offsetAt, floor, boundaries, dayGrid, midnight, civil }
+  return { offsetAt, floor, boundaries, dayGrid, slot, midnight, civil }
 }
 
 /* ------------------------------------------------------------ normalise -- */
@@ -284,8 +302,11 @@ export interface RangeBlock {
   previous: PreviousWindow
 }
 
+/** The five presets, plus the custom window when one is selected. */
+export type RangeMap = Record<RangeName, RangeBlock> & { custom?: RangeBlock }
+
 export interface AggregateResult {
-  ranges: Record<RangeName, RangeBlock>
+  ranges: RangeMap
   stats: {
     /** Rows fetched, before the source filter. */
     fetchedCount: number
@@ -315,6 +336,51 @@ export interface Window {
   bounds: number[]
   prevFrom: number
   prevTo: number
+}
+
+/* ------------------------------------------------------------- grain -- */
+
+/**
+ * Bucket sizes a custom range may snap to.
+ *
+ * Every sub-day rung DIVIDES a day, so buckets land on local midnight
+ * whatever the grain; every day-scale rung is whole days. Nothing between
+ * the two (no 36-hour bucket), because a bucket that is neither a fraction
+ * of a day nor a whole number of them cannot be aligned to local time at
+ * all.
+ */
+const GRAINS = [
+  15 * 60_000, 30 * 60_000,
+  3_600_000, 2 * 3_600_000, 3 * 3_600_000, 4 * 3_600_000, 6 * 3_600_000, 12 * 3_600_000,
+  86_400_000, 2 * 86_400_000, 3 * 86_400_000, 4 * 86_400_000,
+] as const
+
+/** Below this a chart reads as clunky; above it the bars are hairlines. */
+const BARS_MIN = 60
+const BARS_MAX = 100
+
+/**
+ * The bucket size a custom span should use.
+ *
+ * The finest grain that keeps the bar count under `BARS_MAX` — except that
+ * a grain dropping BELOW `BARS_MIN` loses to the finer one's overshoot,
+ * because too few fat bars reads worse than a few too many thin ones. The
+ * ladder is coarse by design, so between rungs one of the two has to give;
+ * this says which.
+ *
+ * Measured across every span from 1 day to 1 year: 60 to 118 bars, and it
+ * reproduces each preset's hand-chosen grain exactly — 1 day picks 15 min,
+ * 7 days 2 hours, 14 days 4 hours, 30 days 12 hours, 90 days 1 day. A
+ * custom range matching a preset therefore draws the same chart, which is
+ * the property that keeps the two modes comparable.
+ */
+export function grainFor(spanMs: number): number {
+  const bars = (g: number) => Math.ceil(spanMs / g)
+  for (let i = 0; i < GRAINS.length; i++) {
+    if (bars(GRAINS[i]) > BARS_MAX) continue
+    return bars(GRAINS[i]) < BARS_MIN && i > 0 ? GRAINS[i - 1] : GRAINS[i]
+  }
+  return GRAINS[GRAINS.length - 1]
 }
 
 /** The local day a calendar window ending on `endDay` begins. */
@@ -355,6 +421,32 @@ export function windowFor(
   }
 }
 
+/**
+ * A window with both ends chosen, rather than a duration hung off an anchor.
+ *
+ * Whole local days only: `from` is midnight on the first day, `to` the last
+ * millisecond of the last. There is deliberately no time of day — a span
+ * shorter than a day is what the 24H preset is for, and a picker that
+ * offered hours would make two controls answer the same question.
+ */
+export interface CustomSpec {
+  from: number
+  to: number
+  bucketMs: number
+}
+
+export function customWindow(Z: ReturnType<typeof makeZone>, spec: CustomSpec): Window {
+  const fromDay = Z.civil(spec.from)
+  const toDay = Z.civil(spec.to)
+  const bounds = Z.dayGrid(spec.bucketMs, fromDay, toDay).filter((b) => b >= spec.from && b <= spec.to)
+  // The equal-length period immediately before, measured in DAYS so a
+  // daylight-saving change cannot make it an hour longer than the window it
+  // is being compared with.
+  const days = spanDays(fromDay, toDay)
+  const { y, m, d } = dayParts(addDays(fromDay, -days))
+  return { bounds, prevFrom: Z.midnight(y, m, d), prevTo: spec.from }
+}
+
 const emptyFact = () => ({
   tIn: 0, tCa: 0, tOu: 0,
   cIn: 0n, cCa: 0n, cOu: 0n, cWr: 0n, cOt: 0n,
@@ -371,7 +463,7 @@ const emptyFact = () => ({
  */
 export function aggregate(
   rows: readonly RawRow[],
-  opts: { now: number; zone: string; source?: string | null },
+  opts: { now: number; zone: string; source?: string | null; custom?: CustomSpec | null },
 ): AggregateResult {
   /*
    * The API returns every execution type — Data Source and Pipeline runs
@@ -385,21 +477,68 @@ export function aggregate(
   const otherChargeKeys = new Set<string>()
   const warn = (m: string) => warnings.add(m)
 
-  const ranges = Object.entries(RANGE_SPECS).map(([key, spec]) => {
-    const { bounds, prevFrom, prevTo } = windowFor(Z, spec, opts.now)
-    return {
-      key: key as RangeName,
-      spec,
-      bounds,
-      prevFrom,
-      prevTo,
-      index: new Map(bounds.map((b, i) => [b, i])),
-      facts: new Map<string, ReturnType<typeof emptyFact>>(),
-      users: new Map<string, number>(),
-      models: new Map<string, number>(),
-      prev: new Map<number, { spend: bigint; tokens: number; ex: number }>(),
+  const DAY = 86_400_000
+
+  /**
+   * How a row finds its bar.
+   *
+   * Counted ranges keep the original instant-keyed lookup, so 24H, 7D and
+   * 14D are untouched. Everything built by `dayGrid` — the calendar ranges
+   * and any custom window — is keyed by WALL-CLOCK SLOT instead, which is
+   * how that grid defines its boundaries in the first place. The two agree
+   * by construction, including on the night the clocks go back, where
+   * `floor` lands on a boundary that is not in the grid and the row falls
+   * through.
+   */
+  const placer = (bucketMs: number, w: Window, wall: boolean, until?: number) => {
+    if (!wall) {
+      const index = new Map(w.bounds.map((b, i) => [b, i]))
+      return (t: number) => index.get(Z.floor(t, bucketMs))
     }
+    const index = new Map<number, number>()
+    if (bucketMs <= DAY) {
+      w.bounds.forEach((b, i) => index.set(Z.slot(b, bucketMs), i))
+      return (t: number) => index.get(Z.slot(t, bucketMs))
+    }
+    // A whole-day grain covers several civil days; each of them points at
+    // the bucket it belongs to, stopping at the window's end so a row just
+    // past it cannot land in the last bar.
+    const stride = Math.round(bucketMs / DAY)
+    w.bounds.forEach((b, i) => {
+      let day = Z.civil(b)
+      for (let k = 0; k < stride; k++) {
+        const { y, m, d } = dayParts(day)
+        const start = Z.midnight(y, m, d)
+        if (until != null && start > until) break
+        index.set(Z.slot(start, DAY), i)
+        day = addDays(day, 1)
+      }
+    })
+    return (t: number) => index.get(Z.slot(t, DAY))
+  }
+
+  const build = (key: string, bucketMs: number, w: Window, wall: boolean, until?: number) => ({
+    key,
+    bucketMs,
+    bounds: w.bounds,
+    prevFrom: w.prevFrom,
+    prevTo: w.prevTo,
+    place: placer(bucketMs, w, wall, until),
+    facts: new Map<string, ReturnType<typeof emptyFact>>(),
+    users: new Map<string, number>(),
+    models: new Map<string, number>(),
+    prev: new Map<number, { spend: bigint; tokens: number; ex: number }>(),
   })
+
+  /* The custom window folds in the SAME pass as the presets, out of the same
+     fact table. It is another window over the rows, not another pipeline —
+     so everything downstream, filters and breakdowns included, works on it
+     without knowing it is custom. */
+  const ranges = Object.entries(RANGE_SPECS)
+    .map(([key, spec]) => build(key, spec.bucketMs, windowFor(Z, spec, opts.now), isCalendar(spec)))
+    .concat(opts.custom
+      ? [build('custom', opts.custom.bucketMs, customWindow(Z, opts.custom), true, opts.custom.to)]
+      : [])
 
   const providers: Record<string, number> = {}
   let reconciled = 0
@@ -444,7 +583,7 @@ export function aggregate(
     let counted = false
 
     for (const r of ranges) {
-      const bi = r.index.get(Z.floor(t, r.spec.bucketMs))
+      const bi = r.place(t)
 
       if (bi === undefined) {
         // Not in the current window. It may still be in the one before it,
@@ -475,7 +614,7 @@ export function aggregate(
     if (counted) placed++
   }
 
-  const out = {} as Record<RangeName, RangeBlock>
+  const out = {} as RangeMap
   for (const r of ranges) {
     const c: Facts = { b: [], u: [], m: [], ex: [], tIn: [], tCa: [], tOu: [], cIn: [], cCa: [], cOu: [], cWr: [], cOt: [] }
     for (const [fk, f] of r.facts) {
@@ -485,8 +624,8 @@ export function aggregate(
       c.cIn.push(fromScaled(f.cIn)); c.cCa.push(fromScaled(f.cCa)); c.cOu.push(fromScaled(f.cOu))
       c.cWr.push(fromScaled(f.cWr)); c.cOt.push(fromScaled(f.cOt))
     }
-    out[r.key] = {
-      bucketMs: r.spec.bucketMs,
+    out[r.key as RangeName] = {
+      bucketMs: r.bucketMs,
       // Derived, not declared: a calendar window is 56 to 62 half-days
       // depending on the month.
       bucketCount: r.bounds.length,
