@@ -8,7 +8,8 @@ import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
-  previousTotals, delta, dayOf, endOfDay, stepAnchor,
+  previousTotals, delta, dayOf, endOfDay, stepWindow, clampAnchor,
+  oldestEndDay, retentionFloor, RETENTION_DAYS,
   type Dimension, type BreakdownRow, type History,
 } from './data/airia'
 import { useApiKey, maskKey } from './lib/apiKey'
@@ -107,43 +108,48 @@ export default function App() {
 
   const serviceKey = data?.meta.serviceKeyLabel ?? 'Standard Key (service)'
 
-  /* Duration is the range buttons; the anchor moves that window through time.
-     Stepping uses the nominal duration — the boundary walk re-aligns it, so a
-     DST day cannot drift the window. */
-  const rangeMs = RANGE_MS[range]
+  /* Duration is the range buttons; the anchor moves that window through
+     time. Stepping is in the range's OWN units — calendar months for 1M and
+     3M — so a step back lands on the window immediately before this one
+     rather than 30 days earlier. */
   const atNow = anchor == null
   /* The last instant the window includes, and the day it falls on. While
      loading, these describe the window being fetched rather than the one
      still on screen — the controls lead, the plot catches up. */
   const endsAt = anchor ?? Date.now()
+  const endDay = dayOf(endsAt)
+  /* Airia's logs expire at a year, so no window may reach past that. The
+     bound is on the whole span, not the date clicked: a 3M window ending
+     one day inside retention would be two-thirds empty. */
+  const oldestDay = oldestEndDay(range)
   const anchorControls = {
     atNow,
-    onStep: (dir: -1 | 1) => setAnchor((prev) => {
-      const next = stepAnchor(prev ?? Date.now(), dir * rangeMs)
-      return next >= Date.now() ? null : next
-    }),
+    atOldest: endDay <= oldestDay,
+    onStep: (dir: -1 | 1) => setAnchor((prev) => stepWindow(range, prev, dir)),
     /* A day, not an instant: the window ends when that local day does, which
        is a boundary every bucket size divides. Picking today means the live
        window, so the dashboard goes back to following the clock rather than
        freezing at tonight's midnight. */
     onPickDay: (day: string) => {
       const end = endOfDay(day)
-      setAnchor(end >= Date.now() ? null : end)
+      setAnchor(end >= Date.now() ? null : clampAnchor(range, end))
     },
     onNow: () => setAnchor(null),
     resolved: block ? `${fmtX?.tick(block.x[0]) ?? ''} – ${fmtX?.tick(block.x[block.x.length - 1]) ?? ''}` : undefined,
     stale: busy,
-    day: dayOf(endsAt),
+    day: endDay,
     fromDay: block ? dayOf(block.x[0]) : undefined,
     maxDay: dayOf(Date.now()),
-    minDay: load.history ? dayOf(load.history.target) : undefined,
+    minDay: oldestDay,
     note: `The ${range} window, ending when that day does${block ? ` · ${block.zone}` : ''}.`,
   }
 
   const toolbar = (
     <TimeRangeBar
       value={range}
-      onChange={setRange}
+      /* An anchor legal for 24H can be older than 3M's oldest window, so it
+         is re-clamped whenever the duration changes. */
+      onChange={(next) => { setRange(next); setAnchor((a) => clampAnchor(next, a)) }}
       anchor={anchorControls}
       filters={
         <MultiSelect
@@ -229,7 +235,12 @@ export default function App() {
      equal length, scoped by the same user filter. Deliberately independent of
      isolate, which is a view on the charts only. */
   const prev = previousTotals(block, userFilter)
+  /* A comparison window that reaches past the retention limit is not a
+     comparison: the rows are gone, so the baseline is short by however much
+     expired, and the tile would report a rise that is really a deletion. */
+  const comparable = block.previous.from >= retentionFloor()
   const vsPrevious = (now: number, before: number) => {
+    if (!comparable) return undefined
     const d = delta(now, before)
     // Direction and magnitude only. More spend is not inherently good or bad,
     // so colouring the arrow would assert a judgement the number cannot make.
@@ -300,6 +311,13 @@ export default function App() {
         <StatTile label="Tokens" value={compact(scoped.totals.tokens)} delta={vsPrevious(scoped.totals.tokens, prev.tokens)} />
         <StatTile label="Executions" value={full(scoped.totals.executions)} delta={vsPrevious(scoped.totals.executions, prev.executions)} />
       </div>
+
+      {comparable ? null : (
+        <p className="page__hint">
+          No period comparison here: the {range} before this one is older than
+          Airia's {RETENTION_DAYS}-day retention, so there is nothing left to compare against.
+        </p>
+      )}
 
       <div className="grid">
         <Card
@@ -579,15 +597,6 @@ export default function App() {
       <PaletteSheet />
     </div>
   )
-}
-
-/** Window length per range, for stepping the anchor. */
-const RANGE_MS: Record<RangeKey, number> = {
-  '24H': 96 * 15 * 60_000,
-  '7D': 84 * 2 * 3_600_000,
-  '14D': 84 * 4 * 3_600_000,
-  '1M': 60 * 12 * 3_600_000,
-  '3M': 90 * 24 * 3_600_000,
 }
 
 /** "15 min", "2 hr", "1 day" — however the range's buckets are sized. */

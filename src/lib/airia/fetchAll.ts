@@ -69,13 +69,22 @@ async function requestWindow(key: string, start: number, end: number, signal?: A
   }
 }
 
-/** Retry genuine transient failures; never retry a "too large" window. */
+/**
+ * Retry genuine transient failures; never retry a "too large" window, a
+ * rejected key, or work that has been CANCELLED.
+ *
+ * Cancellation used to fall through to the retry branch, so aborting a fetch
+ * sat through two backoff sleeps before it gave up. That is what put a
+ * two-second dead patch between changing the window and the page admitting
+ * it was doing anything — and it re-sent requests nobody wanted any more.
+ */
 async function withRetry(key: string, start: number, end: number, signal?: AbortSignal, attempts = 3): Promise<RawRow[]> {
   for (let i = 1; ; i++) {
     try {
       return await requestWindow(key, start, end, signal)
     } catch (err) {
-      if (err instanceof WindowTooLarge || err instanceof AuthError || i >= attempts) throw err
+      if (err instanceof WindowTooLarge || err instanceof AuthError) throw err
+      if (signal?.aborted || i >= attempts) throw err
       await sleep(i * 750)
     }
   }

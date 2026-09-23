@@ -39,21 +39,35 @@ dark. Components reference them via `src/theme/palette.ts` (`series(1)` →
 
 ## Ranges, buckets and time zones
 
-Each range has a fixed bucket size and bar count, defined once in
-`RANGE_SPECS` in `src/lib/airia/aggregate.ts`:
+Each range has a fixed bucket size, defined once in `RANGE_SPECS` in
+`src/lib/airia/aggregate.ts`. The EXTENT comes in two kinds:
 
-| Range | Bucket | Bars | Window |
+| Range | Bucket | Extent | Bars |
 |---|---|---|---|
-| 24H | 15 min | 96 | 24 h |
-| 7D | 2 hr | 84 | 7 d |
-| 14D | 4 hr | 84 | 14 d |
-| 1M | 12 hr | 60 | 30 d |
-| 3M | 1 day | 90 | 90 d |
+| 24H | 15 min | `count` 96 | 96 |
+| 7D | 2 hr | `count` 84 | 84 |
+| 14D | 4 hr | `count` 84 | 84 |
+| 1M | 12 hr | `months` 1 | 56–62 |
+| 3M | 1 day | `months` 3 | 89–92 |
 
-Window length is always `count x bucketMs`. The ingest emits each range
-already bucketed, so the client does a lookup, not a slice-and-downsample, and
-the bar count never depends on card width. Adding or changing a range means
-editing `RANGE_SPECS` in `aggregate.ts` and `RANGES` in `TimeRangeBar.tsx` together.
+- **`count`** — a fixed number of buckets ending with the one containing the
+  anchor. Window length is `count x bucketMs`.
+- **`months`** — a CALENDAR window, because a month is not 30 days. A 1M
+  window ending 3 April starts on 4 March; a 3M window ending 3 June starts
+  on 4 March too. One ending 31 March starts on 1 March — a whole calendar
+  month — because the month arithmetic **clamps** the day (31 March less one
+  month is 28 February, not 3 March).
+
+The bar count of a calendar range therefore varies with the month, which is
+the point: a fixed 30-day window walks off the calendar a little further
+every month. Nothing may assume a constant count — `RangeBlock.bucketCount`
+is `bounds.length`, derived. What has not changed is that **the bar count
+never depends on card width**.
+
+`windowFor()` is the single resolver for both kinds and for the comparison
+window; `earliestBoundary()` folds over it rather than doing its own
+arithmetic. Adding or changing a range means editing `RANGE_SPECS` in
+`aggregate.ts` and `RANGES` in `TimeRangeBar.tsx` together.
 
 **Buckets are aligned to local time, not UTC** (`ZONE`, default
 `Australia/Sydney`). The 12-hour buckets must fall on local midnight and noon
@@ -64,6 +78,23 @@ daylight-saving night those differ and a single pass lands an hour off local
 midnight. The `x` array is therefore shipped rather than derived: locally
 aligned buckets are not a strict arithmetic grid across a DST change, and a
 transition day's bucket is genuinely 23 or 25 hours long.
+
+### Don't walk the grid backwards
+
+A calendar window's boundaries come from `dayGrid()`, which builds forwards
+over civil days and places each bucket start at the instant whose LOCAL
+clock reads a multiple of the bucket size.
+
+It cannot be a backward walk of `floor(b - 1, size)`. On the night daylight
+saving ENDS the local day is 25 hours long, and two instants an hour apart
+are both fixed points of the two-pass floor — so the walk emitted a spurious
+one-hour bucket and a three-month window came out 93 bars instead of 92.
+Stepping back by `size` instead breaks the other way: on the 23-hour day it
+overshoots and skips a day entirely. Measured, in both directions.
+
+What comes out is right on both nights: the April window has one 25-hour
+daily bucket and one 13-hour half-day, the October window one 23-hour and
+one 11-hour. Those are the true lengths of those days.
 
 ## Labelling a bucket
 
@@ -161,11 +192,14 @@ not a re-fetch (~9s). Only an anchor reaching past the cached span fetches,
 and then only the missing older slice, which is prepended. Don't "simplify"
 this into a refetch per step.
 
-Stepping uses the nominal `count x bucketMs`; the boundary walk re-aligns
-afterwards, so a DST day cannot drift the window. `stepAnchor()` additionally
-re-snaps a day-aligned anchor to the local-day grid, because every range's
-duration is a whole number of days and plain arithmetic moves it an hour
-across a DST change — visible on 7D, where the last bar is two hours wide.
+`stepWindow()` steps in the range's OWN units: calendar months for 1M and
+3M, so a step back from a window ending 3 April lands on one ending 3 March
+— contiguous with it, and still a whole month. A fixed 30-day step would
+walk off the calendar. For the counted ranges it slides by
+`count x bucketMs` and re-snaps a day-aligned anchor to the local-day grid,
+because those durations are whole numbers of days and plain arithmetic moves
+them an hour across a DST change — visible on 7D, where the last bar is two
+hours wide.
 
 ### The calendar picks a DAY, and only the end
 
@@ -210,6 +244,39 @@ The anchor control leads and the plot catches up: during a load the date
 button shows the requested day while the resolved chip, which describes what
 is *drawn*, dims (`data-stale`).
 
+Two details that took measuring:
+
+- **Say you are busy BEFORE taking the cache lock.** The foreground may wait
+  on an in-flight backfill slice, and a window that has visibly changed while
+  the page still shows the old one, with nothing moving, reads as a freeze.
+- **But hold the announcement for `--viz-dur-grace`.** A cached re-fold
+  settles in ~260ms; flashing a progress bar at it is worse than silence. The
+  state is set immediately and truthfully; only its *appearance* is delayed,
+  in CSS. Fading back is immediate — the delay lives on the `[data-loading]`
+  rule, not the base one. Measured both ways: a cached step never shows the
+  banner, a real fetch shows it at 220ms.
+
+## The 365-day floor
+
+Airia's logs expire at a year, so nothing older can be selected, fetched or
+held. `RETENTION_DAYS` in `data/airia.ts` is the one definition, and it
+bounds three things: `oldestEndDay()` (the calendar's `min` and the back
+chevron's disabled state), the backfill target, and `needFrom` on every
+fetch.
+
+**The bound is on the whole window, not on the date you click.** A 3M window
+ending one day inside retention would be two-thirds empty, so
+`oldestEndDay()` is the end day whose window *starts* on the floor — for 3M
+that is about 275 days ago, for 24H 365. Verified per range: every one of
+them starts exactly on the floor day.
+
+Switching range re-clamps the anchor (`clampAnchor`), because an anchor
+that is legal for 24H can be older than 3M's oldest window.
+
+One consequence worth keeping: near the floor the COMPARISON window falls
+off the end of retention, so `App.tsx` drops the KPI deltas and says why.
+Showing them would report a rise that is really a deletion.
+
 ## Prefetching history
 
 After first paint, `useAiriaLive` reaches back to the **one-year retention
@@ -252,8 +319,11 @@ each fetch returns its windows in order and older slices are prepended whole.
 ## Period comparison
 
 The KPI tiles compare against the window immediately before the selected one,
-of equal length. `earliestBoundary()` therefore reaches back **twice** each
-range's bar count — 180 days for 3M — and `aggregate()` accumulates those
+of equal extent — equal length for a counted range, the same number of
+CALENDAR months for 1M and 3M, so February is compared against January
+rather than against 30 days. `earliestBoundary()` therefore reaches back
+**twice** each range's extent — six calendar months for 3M, which is 181 to
+184 days depending on where in the year it lands — and `aggregate()` accumulates those
 older rows as per-user scalars (`RangeBlock.previous`) rather than a second
 fact table: the tiles need three numbers, and the filter needs them split by
 user.
@@ -263,6 +333,9 @@ computed arithmetically, so a DST change cannot shift it.
 
 "Previous window" means the duration immediately before **the anchored
 window**, not before now — it moves with the anchor.
+
+A comparison window that reaches past the retention floor is not shown at
+all — see **The 365-day floor**.
 
 A change past roughly tenfold is shown as a multiplier ("214k x") rather than
 a percentage; a near-zero baseline produced "21388468%", which is accurate and
@@ -431,6 +504,11 @@ second copy.
   so a missing filter inflates every figure on the page. This happened: the
   client path shipped without it and read $2,325 against a true $1,643. The
   footer prints kept-of-fetched counts so it cannot go unnoticed again.
+- **Never retry a cancelled request.** `withRetry` treats anything that is
+  not `WindowTooLarge` or `AuthError` as transient, so an abort used to sit
+  through two backoff sleeps before giving up — two seconds of dead air
+  between changing the window and the page reacting, and re-sent requests
+  nobody wanted. It checks `signal.aborted` first now.
 - **Silent truncation.** A 404 with an empty body means "response too large",
   not "not found", and a 200 can return fewer `items` than `totalCount`. Both,
   plus timeouts, mean *bisect the window and retry the halves*. Checking the

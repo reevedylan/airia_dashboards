@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RangeKey } from '../components'
-import { aggregate, earliestBoundary, makeZone, SERVICE_KEY, type AggregateResult } from '../lib/airia/aggregate'
+import {
+  aggregate, earliestBoundary, isCalendar, makeZone, calendarStartDay,
+  RANGE_SPECS, SERVICE_KEY, type AggregateResult,
+} from '../lib/airia/aggregate'
+import { addDays, addMonths, type Day } from '../lib/day'
 import { fetchAll, probe, AuthError, BACKGROUND_CONCURRENCY, type Progress } from '../lib/airia/fetchAll'
 import type { RawRow } from '../lib/airia/aggregate'
 
@@ -98,10 +102,17 @@ const DAY_MS = 86_400_000
 const Z = makeZone(ZONE)
 
 /**
- * Platform retention is a year, so that is the hard floor on how far back
- * any window can usefully reach — and therefore how much is worth holding.
+ * Platform retention is a year. Airia's logs expire at 365 days, so that is
+ * a hard floor on three separate things: how far back a window may be
+ * SELECTED, how far the background backfill reaches, and how far a fetch
+ * will ask for. Past it there is nothing to find, and a window that reached
+ * there would quietly show a partly-empty span as if it were real.
  */
-const RETENTION_MS = 365 * DAY_MS
+export const RETENTION_DAYS = 365
+const RETENTION_MS = RETENTION_DAYS * DAY_MS
+
+/** The oldest instant the source still holds. */
+export const retentionFloor = (): number => Date.now() - RETENTION_MS
 
 /**
  * How much older history one background step fetches.
@@ -124,19 +135,6 @@ export function dayOf(t: number): string {
 }
 
 /**
- * The instant the local day `y-m-d` begins.
- *
- * Anchored on local noon rather than local midnight: noon is never within an
- * hour of a daylight-saving transition, so one offset lookup lands inside
- * the right day, and `floor` — which re-takes the offset at the boundary —
- * walks back to that day's true midnight.
- */
-function localMidnight(y: number, m: number, d: number): number {
-  const noon = Date.UTC(y, m - 1, d, 12)
-  return Z.floor(noon - Z.offsetAt(noon), DAY_MS)
-}
-
-/**
  * The LAST INSTANT of a local day — one millisecond before midnight.
  *
  * That is what a window anchor means: the last moment included, not the
@@ -149,22 +147,20 @@ function localMidnight(y: number, m: number, d: number): number {
  * 3M the last bar is that whole day, on 1M its PM half, on 24H its last
  * quarter hour.
  */
-export function endOfDay(day: string): number {
+export function endOfDay(day: Day): number {
   const [y, m, d] = day.split('-').map(Number)
-  return localMidnight(y, m, d + 1) - 1
+  return Z.midnight(y, m, d + 1) - 1
 }
 
 /**
  * Move a window anchor by `ms`, keeping it on the local-day grid if it was
  * already there.
  *
- * Every range's duration is a whole number of days, so a window that ends
- * with a day should still end with a day after a step. Plain arithmetic
- * drifts it by an hour across a daylight-saving change, which on a 2-hour
- * bucket is a visibly different last bar. A live anchor is an arbitrary
- * instant and is left alone.
+ * Plain arithmetic drifts a window by an hour across a daylight-saving
+ * change, which on a 2-hour bucket is a visibly different last bar. A live
+ * anchor is an arbitrary instant and is left alone.
  */
-export function stepAnchor(from: number, ms: number): number {
+function slideAnchor(from: number, ms: number): number {
   const to = from + ms
   // Anchors sit on the last millisecond of a day, so test the boundary that
   // follows them.
@@ -175,6 +171,61 @@ export function stepAnchor(from: number, ms: number): number {
   // whether it is 23, 24 or 25 hours long.
   const above = Z.floor(below + DAY_MS + DAY_MS / 2, DAY_MS)
   return (end - below <= above - end ? below : above) - 1
+}
+
+/** How many whole days a fixed-count range spans. */
+const spanDays = (range: RangeKey): number => {
+  const spec = RANGE_SPECS[range]
+  return isCalendar(spec) ? 0 : (spec.count * spec.bucketMs) / DAY_MS
+}
+
+/**
+ * The oldest day a window of this range may END on.
+ *
+ * Chosen so the window itself starts no earlier than the retention floor:
+ * the bound is on the whole span, not just on the date you click, because a
+ * 3M window ending one day inside retention would still be two-thirds
+ * empty.
+ */
+export function oldestEndDay(range: RangeKey): Day {
+  const floor = dayOf(retentionFloor())
+  const spec = RANGE_SPECS[range]
+  return isCalendar(spec)
+    // The inverse of calendarStartDay: the end day whose window starts here.
+    ? addDays(addMonths(floor, spec.months), -1)
+    : addDays(floor, spanDays(range) - 1)
+}
+
+/** Clamp an anchor into the selectable range — used when the range changes
+ *  under an anchor that was legal for the old one. */
+export function clampAnchor(range: RangeKey, anchor: number | null): number | null {
+  if (anchor == null) return null
+  return Math.max(anchor, endOfDay(oldestEndDay(range)))
+}
+
+/**
+ * Move the window one step, in the range's OWN units.
+ *
+ * A calendar range steps by calendar months, so stepping back from a window
+ * ending 3 April lands on one ending 3 March — contiguous with it, and
+ * still a whole month. Stepping a fixed 30 days instead would walk the
+ * window off the calendar a little further every month. Returns null for
+ * the live window.
+ */
+export function stepWindow(range: RangeKey, from: number | null, dir: -1 | 1): number | null {
+  const spec = RANGE_SPECS[range]
+  const at = from ?? Date.now()
+  const next = isCalendar(spec)
+    ? endOfDay(addMonths(dayOf(at), dir * spec.months))
+    : slideAnchor(at, dir * spec.count * spec.bucketMs)
+  if (next >= Date.now()) return null
+  return clampAnchor(range, next)
+}
+
+/** The first day of the window a given range would show ending on `day`. */
+export function windowStartDay(range: RangeKey, day: Day): Day {
+  const spec = RANGE_SPECS[range]
+  return isCalendar(spec) ? calendarStartDay(day, spec.months) : addDays(day, -(spanDays(range) - 1))
 }
 
 /**
@@ -252,9 +303,17 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
 
     ;(async () => {
       try {
+        /* Say so BEFORE taking the cache lock. This call may have to wait
+           for an in-flight backfill slice to fold, and a window that has
+           visibly changed while the page still shows the old one, with no
+           indication anything is happening, reads as a freeze. */
+        show({ message: 'Updating…' })
         const wallNow = Date.now()
         const at = anchor ?? wallNow
-        const needFrom = earliestBoundary(at, ZONE)
+        /* Never ask for rows older than the source keeps. Near the oldest
+           selectable window the comparison period runs off the end of
+           retention, and requesting it is ninety day-windows of nothing. */
+        const needFrom = Math.max(earliestBoundary(at, ZONE), wallNow - RETENTION_MS)
 
         if (cache.current?.key !== key) {
           cache.current = null

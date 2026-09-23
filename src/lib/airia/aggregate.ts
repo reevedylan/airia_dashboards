@@ -1,3 +1,5 @@
+import { addDays, addMonths, dayISO, dayParts, type Day } from '../day'
+
 /**
  * Turns raw AIOperationExecutions rows into the sparse fact table the
  * dashboard folds. Pure: no DOM, no network, no React — so it can be tested
@@ -48,14 +50,35 @@ export function slim(row: RawRow): RawRow {
   return out as RawRow
 }
 
-/** Bucket size and bar count per range. Window length is count x bucketMs. */
+/**
+ * Bucket size and extent per range.
+ *
+ * Two kinds of window, and the difference is deliberate:
+ *
+ * - `count` — a FIXED number of buckets ending with the one containing the
+ *   anchor. Window length is always `count x bucketMs`.
+ * - `months` — a CALENDAR window. A month is not 30 days, so 1M and 3M are
+ *   measured in months rather than in bars: a 1M window ending 3 April
+ *   starts on 4 March, and a 3M window ending 3 June starts on 4 March too.
+ *   The bar count therefore varies with the month (a 1M window is 56 to 62
+ *   half-days), which is the point — a fixed 30-day window drifts off the
+ *   calendar a little further every month.
+ *
+ * A calendar window is whole local days, so it still lands exactly on the
+ * bucket grid at both ends.
+ */
 export const RANGE_SPECS = {
   '24H': { bucketMs: 15 * 60_000, count: 96 },
   '7D': { bucketMs: 2 * 3_600_000, count: 84 },
   '14D': { bucketMs: 4 * 3_600_000, count: 84 },
-  '1M': { bucketMs: 12 * 3_600_000, count: 60 },
-  '3M': { bucketMs: 24 * 3_600_000, count: 90 },
+  '1M': { bucketMs: 12 * 3_600_000, months: 1 },
+  '3M': { bucketMs: 24 * 3_600_000, months: 3 },
 } as const
+
+export type RangeSpec = (typeof RANGE_SPECS)[keyof typeof RANGE_SPECS]
+/** True for the calendar-measured ranges, whose bar count is not fixed. */
+export const isCalendar = (s: RangeSpec): s is Extract<RangeSpec, { months: number }> =>
+  'months' in s
 
 export type RangeName = keyof typeof RANGE_SPECS
 
@@ -134,7 +157,60 @@ export function makeZone(zone: string) {
     return out
   }
 
-  return { offsetAt, floor, boundaries }
+  /**
+   * Bucket starts across the whole local days `from`..`to`, inclusive.
+   *
+   * Built forwards from the civil calendar rather than by stepping back a
+   * bucket at a time. On the night daylight saving ends the local day is 25
+   * hours long, and TWO instants an hour apart both survive the two-pass
+   * floor as "midnight" — so walking backwards emitted a spurious one-hour
+   * bucket, and a three-month window came out 93 bars instead of 92.
+   *
+   * A bucket start is the instant whose LOCAL clock reads a multiple of the
+   * bucket size, which is exactly what "aligned to local midnight and noon"
+   * means. On a transition day that leaves one genuinely long or short
+   * bucket, which is the truth about that day.
+   */
+  const dayGrid = (size: number, from: Day, to: Day): number[] => {
+    const out: number[] = []
+    for (let day = from; day <= to; day = addDays(day, 1)) {
+      const { y, m, d } = dayParts(day)
+      const next = midnight(y, m, d + 1)
+      out.push(midnight(y, m, d))
+      for (let w = size; w < 86_400_000; w += size) {
+        // Wall clock to instant, two passes for the same reason `floor` needs
+        // two: the offset at the guess may not be the offset at the answer.
+        const wall = Date.UTC(y, m - 1, d) + w
+        const t = wall - offsetAt(wall - offsetAt(wall))
+        if (t > out[out.length - 1] && t < next) out.push(t)
+      }
+    }
+    return out
+  }
+
+  /**
+   * Midnight beginning the local day `y-m-d`.
+   *
+   * Anchored on local NOON: noon is never within an hour of a daylight-saving
+   * transition, so one offset lookup lands inside the right day and `floor` —
+   * which re-takes the offset at the boundary — walks back to that day's true
+   * midnight.
+   */
+  const midnight = (y: number, m: number, d: number): number => {
+    const noon = Date.UTC(y, m - 1, d, 12)
+    return floor(noon - offsetAt(noon), 86_400_000)
+  }
+
+  /** The civil date `t` falls on, in this zone. */
+  const civil = (t: number): Day => {
+    const p: Record<string, string> = {}
+    for (const part of fmt.formatToParts(new Date(t))) {
+      if (part.type !== 'literal') p[part.type] = part.value
+    }
+    return dayISO(+p.year, +p.month, +p.day)
+  }
+
+  return { offsetAt, floor, boundaries, dayGrid, midnight, civil }
 }
 
 /* ------------------------------------------------------------ normalise -- */
@@ -227,6 +303,58 @@ export interface AggregateResult {
   }
 }
 
+/**
+ * Where a window starts and ends, on the local-time grid.
+ *
+ * `bounds` are the bucket starts, oldest first; `prevFrom`/`prevTo` bracket
+ * the window immediately before it, of equal extent, which the KPI tiles
+ * compare against. Both are WALKED on the same grid rather than computed
+ * arithmetically, so a daylight-saving change cannot shift either.
+ */
+export interface Window {
+  bounds: number[]
+  prevFrom: number
+  prevTo: number
+}
+
+/** The local day a calendar window ending on `endDay` begins. */
+export function calendarStartDay(endDay: Day, months: number): Day {
+  // One month back from the last day, then the day after: a window ending
+  // 3 April covers 4 March to 3 April, which is what "a month" means when
+  // months are 28 to 31 days long.
+  return addDays(addMonths(endDay, -months), 1)
+}
+
+export function windowFor(
+  Z: ReturnType<typeof makeZone>,
+  spec: RangeSpec,
+  at: number,
+): Window {
+  if (!isCalendar(spec)) {
+    // Twice the bars, so the older half is the immediately preceding window
+    // of equal length.
+    const all = Z.boundaries(spec.bucketMs, spec.count * 2, at)
+    const bounds = all.slice(spec.count)
+    return { bounds, prevFrom: all[0], prevTo: bounds[0] }
+  }
+
+  const startOf = (end: number): number => {
+    const { y, m, d } = dayParts(calendarStartDay(Z.civil(end), spec.months))
+    return Z.midnight(y, m, d)
+  }
+  const from = startOf(at)
+  return {
+    // Trimmed at `at`, so the live window stops at the bucket in progress
+    // rather than running to the end of today.
+    bounds: Z.dayGrid(spec.bucketMs, Z.civil(from), Z.civil(at)).filter((b) => b <= at),
+    // The previous window ends the instant this one starts, and is measured
+    // in the same calendar months — not in this window's own day count,
+    // which would drift across a short month.
+    prevFrom: startOf(from - 1),
+    prevTo: from,
+  }
+}
+
 const emptyFact = () => ({
   tIn: 0, tCa: 0, tOu: 0,
   cIn: 0n, cCa: 0n, cOu: 0n, cWr: 0n, cOt: 0n,
@@ -258,17 +386,13 @@ export function aggregate(
   const warn = (m: string) => warnings.add(m)
 
   const ranges = Object.entries(RANGE_SPECS).map(([key, spec]) => {
-    // Twice the bars, so the older half is the immediately preceding window
-    // of equal length. Boundaries are walked, not arithmetic, so the previous
-    // window lands on the same local-time grid across a DST change.
-    const all = Z.boundaries(spec.bucketMs, spec.count * 2, opts.now)
-    const bounds = all.slice(spec.count)
+    const { bounds, prevFrom, prevTo } = windowFor(Z, spec, opts.now)
     return {
       key: key as RangeName,
       spec,
       bounds,
-      prevFrom: all[0],
-      prevTo: bounds[0],
+      prevFrom,
+      prevTo,
       index: new Map(bounds.map((b, i) => [b, i])),
       facts: new Map<string, ReturnType<typeof emptyFact>>(),
       users: new Map<string, number>(),
@@ -363,7 +487,9 @@ export function aggregate(
     }
     out[r.key] = {
       bucketMs: r.spec.bucketMs,
-      bucketCount: r.spec.count,
+      // Derived, not declared: a calendar window is 56 to 62 half-days
+      // depending on the month.
+      bucketCount: r.bounds.length,
       zone: opts.zone,
       // Shipped rather than derived: locally-aligned buckets are not a strict
       // arithmetic grid across a daylight-saving change.
@@ -400,11 +526,12 @@ export function aggregate(
 /**
  * Earliest instant any range needs, so one fetch covers them all.
  *
- * Twice each range's bar count, because the KPI tiles compare against the
- * immediately preceding window of equal length — for 3M that is 180 days.
+ * Reaches back twice each range's extent, because the KPI tiles compare
+ * against the immediately preceding window of equal length — for 3M that is
+ * six calendar months, which is 181 to 184 days depending on where in the
+ * year it lands.
  */
 export function earliestBoundary(now: number, zone: string): number {
   const Z = makeZone(zone)
-  return Math.min(...Object.values(RANGE_SPECS)
-    .map((s) => Z.boundaries(s.bucketMs, s.count * 2, now)[0]))
+  return Math.min(...Object.values(RANGE_SPECS).map((s) => windowFor(Z, s, now).prevFrom))
 }

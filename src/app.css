@@ -117,6 +117,9 @@ body {
    The alternative — dropping to the key gate — read as being logged out. */
 .page__busy {
   display: flex; align-items: center; gap: 12px;
+  /* Held back for the same grace period as the card dimming, so the two
+     appear together and neither flickers on a fast re-fold. */
+  animation: viz-appear 1ms linear var(--viz-dur-grace) both;
   margin: -6px 0 18px; padding: 9px 14px;
   background: var(--viz-surface); border: 1px solid var(--viz-border);
   border-radius: var(--viz-radius-ctl);
@@ -135,6 +138,7 @@ body {
 }
 /* No total to count against yet — a pulse says "working", not "45% done". */
 .page__progress[data-indeterminate] > span { width: 40%; animation: viz-slide 1.1s var(--viz-ease) infinite; }
+@keyframes viz-appear { from { visibility: hidden; } to { visibility: visible; } }
 @keyframes viz-slide {
   from { transform: translateX(-100%); }
   to   { transform: translateX(250%); }
@@ -151,7 +155,15 @@ body {
 }
 
 /* Matches the cards' own loading dim, so the whole page fades as one. */
-.strip[data-loading] { opacity: 0.45; transition: opacity var(--viz-dur-base) var(--viz-ease); }
+.strip { transition: opacity var(--viz-dur-base) var(--viz-ease); }
+.strip[data-loading] { opacity: 0.45; transition-delay: var(--viz-dur-grace); }
+
+/* Said rather than left blank: a missing comparison needs a reason, or it
+   reads as a bug. */
+.page__hint {
+  margin: -6px 0 18px; padding: 0 2px;
+  font: 400 11.5px/1.5 var(--viz-font); color: var(--viz-text-muted);
+}
 
 /* Active-scope banner. States plainly that the whole page is filtered, so a
    reader never mistakes a scoped total for the tenant total. */

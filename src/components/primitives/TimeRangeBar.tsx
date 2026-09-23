@@ -20,6 +20,8 @@ export interface AnchorControls {
   onNow: () => void
   /** True when the window already ends at the wall clock. */
   atNow: boolean
+  /** True when the window already reaches the oldest retained data. */
+  atOldest?: boolean
   /** The resolved window, shown only when it is not the live one. */
   resolved?: string
   /**
@@ -99,7 +101,7 @@ export function TimeRangeBar({ value, onChange, anchor, filters, actions }: Time
  * the pair reads as one row of controls rather than two unrelated widgets.
  */
 function AnchorBar({
-  range, onStep, onPickDay, atNow, day, fromDay, maxDay, minDay, note,
+  range, onStep, onPickDay, atNow, atOldest, day, fromDay, maxDay, minDay, note,
 }: AnchorControls & { range: RangeKey }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
@@ -148,11 +150,14 @@ function AnchorBar({
 
   return (
     <div className="viz-anchor" role="group" aria-label="Window position" ref={root}>
+      {/* Stepping past retention would show a window the source has
+          already expired. */}
       <button
         type="button"
         className="viz-anchor__step"
         aria-label={`Previous ${range}`}
-        title={`Previous ${range}`}
+        title={atOldest ? 'No data older than this is retained' : `Previous ${range}`}
+        disabled={atOldest}
         onClick={() => onStep(-1)}
       >
         <ChevronLeft />

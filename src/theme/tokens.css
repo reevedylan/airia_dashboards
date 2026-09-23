@@ -108,6 +108,10 @@
   --viz-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --viz-dur-fast: 90ms;
+  /* How long work may run before the page admits to being busy. Shorter and
+     every cached re-fold flashes; longer and a real fetch looks like a
+     freeze. */
+  --viz-dur-grace: 220ms;
   --viz-dur-base: 160ms;
   --viz-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }

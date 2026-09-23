@@ -92,16 +92,25 @@ rate card (`in $/M`, `out $/M`). Searchable, sortable, show-top-N.
 
 ### Time ranges
 
-Each range has a fixed bucket size and bar count, so what you see never depends
-on how wide the window happens to be:
+Each range has a fixed bucket size, so what you see never depends on how wide
+the window happens to be:
 
-| Range | Bucket | Bars |
-|---|---|---|
-| 24H | 15 min | 96 |
-| 7D | 2 hr | 84 |
-| 14D | 4 hr | 84 |
-| 1M | 12 hr | 60 |
-| 3M | 1 day | 90 |
+| Range | Bucket | Extent | Bars |
+|---|---|---|---|
+| 24H | 15 min | 24 hours | 96 |
+| 7D | 2 hr | 7 days | 84 |
+| 14D | 4 hr | 14 days | 84 |
+| 1M | 12 hr | 1 calendar month | 56–62 |
+| 3M | 1 day | 3 calendar months | 89–92 |
+
+**1M and 3M are measured in calendar months, not in days**, because a month
+isn't 30 days. A 1M window ending 3 April starts on 4 March; a 3M window
+ending 3 June starts on 4 March as well. One ending 31 March starts on
+1 March — a whole calendar March — because the arithmetic clamps rather than
+rolling over. The bar count moves with the month, which is the point: a
+fixed 30-day window drifts off the calendar a little further every time you
+step it. Comparisons follow the same rule, so February is compared against
+January rather than against "the previous 30 days".
 
 Buckets align to **local time** (`Australia/Sydney` by default), not UTC. The
 12-hour buckets have to land on midnight and noon to read as AM/PM, and daily
@@ -114,6 +123,15 @@ Duration and position are separate controls. The range buttons pick how long a
 window is; the chevrons step it back or forward by its own length, and the
 calendar jumps to "this duration, ending on that day". Forward is disabled at
 the live window — you can't step into the future.
+
+You can go back a year and no further: Airia's logs expire at 365 days, so
+the back chevron stops and the calendar greys out anything earlier. The
+limit applies to the whole window rather than the date you click — a 3M
+window ending one day inside retention would be two-thirds empty — so the
+oldest 3M window you can select ends about 275 days ago. Near that edge the
+period comparison disappears and says why: the window before it has expired,
+and a comparison against missing rows would report a rise that is really a
+deletion.
 
 The calendar is a month view that picks a **day**, not an instant, so the
 window lands on the same grid the bars do: it ends when that local day ends,
