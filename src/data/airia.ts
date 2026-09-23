@@ -31,6 +31,8 @@ export interface AiriaMeta {
   rowCount: number
   /** Rows fetched, before the source filter. */
   fetchedCount: number
+  /** Rows reconciled against the pre-2026-06-18 total convention. */
+  legacyTotals: number
   rowsPlaced: number
   rangeTotalCount: number
   windowSplits: number
@@ -44,7 +46,7 @@ export interface AiriaMeta {
   warnings: string[]
 }
 
-export type { Facts, RangeBlock } from '../lib/airia/aggregate'
+export type { Facts, RangeBlock, PreviousWindow } from '../lib/airia/aggregate'
 import type { RangeBlock } from '../lib/airia/aggregate'
 
 export interface AiriaData {
@@ -109,6 +111,7 @@ export function useAiriaLive(key: string | null): LoadState {
               zone: ZONE,
               rowCount: agg.stats.rowCount,
               fetchedCount: agg.stats.fetchedCount,
+              legacyTotals: agg.stats.legacyTotals,
               rowsPlaced: agg.stats.rowsPlaced,
               rangeTotalCount: expected,
               windowSplits: splits,
@@ -222,6 +225,54 @@ export function seriesFor(block: RangeBlock, filter: FactFilter = {}): Series {
   }
   out.totals.tokens = out.totals.tokensInput + out.totals.tokensCached + out.totals.tokensOutput
   return out
+}
+
+/* ---------------------------------------------------- period comparison -- */
+
+export interface PeriodTotals {
+  spend: number
+  tokens: number
+  executions: number
+}
+
+/**
+ * Totals for the window immediately before the selected one, scoped by the
+ * same user filter — so a delta reflects that user's change, not the tenant's.
+ */
+export function previousTotals(block: RangeBlock, users?: ReadonlySet<string>): PeriodTotals {
+  const p = block.previous
+  const all = !users || users.size === 0
+  let spend = 0, tokens = 0, executions = 0
+  for (let i = 0; i < block.users.length; i++) {
+    if (!all && !users!.has(block.users[i])) continue
+    spend += p.spend[i] ?? 0
+    tokens += p.tokens[i] ?? 0
+    executions += p.executions[i] ?? 0
+  }
+  return { spend, tokens, executions }
+}
+
+export interface Delta {
+  direction: 'up' | 'down' | 'none'
+  /** "12%", or "new" when there is nothing to compare against. */
+  text: string
+}
+
+/**
+ * Change from `before` to `now`.
+ *
+ * A zero baseline has no percentage — dividing by it yields Infinity, and
+ * calling it "+100%" would understate an arrival from nothing. It reports
+ * "new" instead.
+ */
+export function delta(now: number, before: number): Delta | null {
+  if (before === 0) return now === 0 ? null : { direction: 'up', text: 'new' }
+  const change = (now - before) / before
+  if (Math.abs(change) < 0.0005) return { direction: 'none', text: '0%' }
+  return {
+    direction: change > 0 ? 'up' : 'down',
+    text: `${Math.abs(change * 100) < 10 ? Math.abs(change * 100).toFixed(1) : Math.round(Math.abs(change * 100))}%`,
+  }
 }
 
 /* --------------------------------------------------------- breakdowns -- */

@@ -8,6 +8,7 @@ import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
+  previousTotals, delta,
   type Dimension, type BreakdownRow,
 } from './data/airia'
 import { useApiKey, maskKey } from './lib/apiKey'
@@ -177,6 +178,17 @@ export default function App() {
         }
       : undefined
 
+  /* The KPI tiles compare against the window immediately before this one, of
+     equal length, scoped by the same user filter. Deliberately independent of
+     isolate, which is a view on the charts only. */
+  const prev = previousTotals(block, userFilter)
+  const vsPrevious = (now: number, before: number) => {
+    const d = delta(now, before)
+    // Direction and magnitude only. More spend is not inherently good or bad,
+    // so colouring the arrow would assert a judgement the number cannot make.
+    return d ? { ...d, vs: `vs previous ${range}` } : undefined
+  }
+
   const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
   const cumNote = `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`
   const isolationNote = activeRow
@@ -215,9 +227,9 @@ export default function App() {
       ) : null}
 
       <div className="strip">
-        <StatTile label="Token spend" value={currency(scoped.totals.cost)} />
-        <StatTile label="Tokens" value={compact(scoped.totals.tokens)} />
-        <StatTile label="Executions" value={full(scoped.totals.executions)} />
+        <StatTile label="Token spend" value={currency(scoped.totals.cost)} delta={vsPrevious(scoped.totals.cost, prev.spend)} />
+        <StatTile label="Tokens" value={compact(scoped.totals.tokens)} delta={vsPrevious(scoped.totals.tokens, prev.tokens)} />
+        <StatTile label="Executions" value={full(scoped.totals.executions)} delta={vsPrevious(scoped.totals.executions, prev.executions)} />
       </div>
 
       <div className="grid">
@@ -484,7 +496,10 @@ export default function App() {
         {data!.meta.source} executions only · {full(data!.meta.rowCount)} of{' '}
         {full(data!.meta.fetchedCount)} fetched rows, {full(data!.meta.amountsReconciled)} of
         which reconcile exactly
-        {data!.meta.amountsMismatched > 0 ? ` (${data!.meta.amountsMismatched} do not)` : ''} ·
+        {data!.meta.amountsMismatched > 0 ? ` (${data!.meta.amountsMismatched} do not)` : ''}
+        {data!.meta.legacyTotals > 0
+          ? `, ${full(data!.meta.legacyTotals)} of them against the pre-June-2026 total convention`
+          : ''} ·
         {' '}generated {new Date(data!.meta.generatedAt).toLocaleString('en-GB')}
       </p>
 

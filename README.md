@@ -67,7 +67,13 @@ would reach logs and browser history.
 
 ## What it shows
 
-**Three KPI tiles** — token spend, tokens, executions — for the current scope.
+**Three KPI tiles** — token spend, tokens, executions — for the current scope,
+each with a change against the immediately preceding window of equal length
+(14D compares against the 14 days before it). The arrow is deliberately
+**neutral**: more spend is neither good nor bad, so colouring it green or red
+would assert a judgement the number cannot make. A zero baseline reads "new"
+rather than a divide-by-zero. The comparison respects the user filter and is
+independent of isolate.
 
 **Two charts**, each switchable between *Daily* (stacked bars by category) and
 *Cumulative* (running total from zero at the window start):
@@ -155,6 +161,13 @@ of sync; don't reintroduce a second copy.
 - **`additionalCharges` is a dynamically-keyed map** (5-minute and 1-hour
   write-cache variants, web-search requests). Unknown keys are summed, never
   hardcoded.
+- **`totalTokenAmountConsumed` has two conventions.** Airia changed it on
+  **18 June 2026**: before that it *excluded* `additionalCharges`, after it
+  *includes* them — a clean cutover with no overlap. Spend is therefore summed
+  from the components and never read from `total`, which is right either way.
+  The reconciliation check accepts both rules and reports how many rows used
+  the older one; accepting only the new rule flagged 65% of older rows as
+  corrupt when they were merely older.
 - **Money arrives as 11-decimal strings** and is accumulated as scaled
   integers, then converted once. Floats drift over 10⁵ rows.
 - **~37% of rows carry no user.** Those requests used the tenant's standard

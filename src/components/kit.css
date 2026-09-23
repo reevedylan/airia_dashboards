@@ -289,12 +289,14 @@
 .viz-stat__label { font: 500 12px/1 var(--viz-font); color: var(--viz-text-secondary); }
 .viz-stat__value { font: 650 24px/1.15 var(--viz-font); color: var(--viz-text-primary); letter-spacing: -0.02em; }
 .viz-stat__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 20px; }
+/* Neutral by default: direction and magnitude, no verdict. */
 .viz-stat__delta {
   display: inline-flex; align-items: center; gap: 5px;
   font: 500 11.5px/1 var(--viz-font);
-  color: var(--viz-status-critical);
+  color: var(--viz-text-secondary);
 }
-.viz-stat__delta[data-good] { color: var(--viz-status-good); }
+.viz-stat__delta[data-tone='good'] { color: var(--viz-status-good); }
+.viz-stat__delta[data-tone='bad'] { color: var(--viz-status-critical); }
 .viz-stat__vs { color: var(--viz-text-muted); }
 
 /* ------------------------------------------------------- reduced motion -- */

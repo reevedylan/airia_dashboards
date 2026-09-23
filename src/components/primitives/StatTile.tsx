@@ -3,8 +3,20 @@ import { Sparkline } from '../charts/Sparkline'
 export interface StatTileProps {
   label: string
   value: string
-  /** Signed, against a named period — e.g. { text: '+12.4%', good: true, vs: 'vs last month' } */
-  delta?: { text: string; good: boolean; vs: string }
+  /**
+   * Change against a named period.
+   *
+   * `tone` defaults to neutral, and usually should be: more spend, more
+   * tokens or more executions is not inherently good or bad, and colouring
+   * the arrow green or red asserts a judgement the number does not support.
+   * Reserve good/bad for metrics that genuinely have a right direction.
+   */
+  delta?: {
+    direction: 'up' | 'down' | 'none'
+    text: string
+    vs: string
+    tone?: 'neutral' | 'good' | 'bad'
+  }
   trend?: readonly number[]
   trendColor?: string
 }
@@ -18,8 +30,10 @@ export function StatTile({ label, value, delta, trend, trendColor }: StatTilePro
       <span className="viz-stat__value">{value}</span>
       <span className="viz-stat__foot">
         {delta ? (
-          <span className="viz-stat__delta" data-good={delta.good ? '' : undefined}>
-            <span aria-hidden="true">{delta.good ? '▲' : '▼'}</span>
+          <span className="viz-stat__delta" data-tone={delta.tone ?? 'neutral'}>
+            <span aria-hidden="true">
+              {delta.direction === 'up' ? '▲' : delta.direction === 'down' ? '▼' : '·'}
+            </span>
             {delta.text}
             <span className="viz-stat__vs">{delta.vs}</span>
           </span>

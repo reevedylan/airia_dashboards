@@ -145,6 +145,22 @@ shipping every pre-aggregation would be.
 shares. Add a dimension by adding a column to the facts, not by adding
 another pre-aggregation.
 
+## Period comparison
+
+The KPI tiles compare against the window immediately before the selected one,
+of equal length. `earliestBoundary()` therefore reaches back **twice** each
+range's bar count — 180 days for 3M — and `aggregate()` accumulates those
+older rows as per-user scalars (`RangeBlock.previous`) rather than a second
+fact table: the tiles need three numbers, and the filter needs them split by
+user.
+
+The previous window's boundaries are *walked* on the same local-time grid, not
+computed arithmetically, so a DST change cannot shift it.
+
+Deltas are **neutral** — direction and magnitude, no colour. More spend is not
+inherently good or bad. A zero baseline reports "new"; both zero reports
+nothing at all.
+
 ## Scoping and isolating
 
 Two different mechanisms, and the difference matters:
@@ -324,6 +340,12 @@ second copy.
   *models* for a per-user rate is fine — that is what a per-user rate means.
 - **Write-cache tokens have a cost but no count**, so they can never appear in
   any per-token rate. They are a line item on the spend chart only.
+- **`totalTokenAmountConsumed` has two conventions**, switched on
+  2026-06-18: before, it excluded `additionalCharges`; after, it includes
+  them. Clean cutover. **Always sum spend from the components, never read
+  `total`** — that is correct on both sides. The reconciliation check accepts
+  either rule and counts the legacy ones; checking only the new rule reported
+  65% of older rows as mismatched.
 - **Money arrives as 11-decimal strings.** Accumulate as scaled integers, then
   convert once. Not floats.
 - `Date.parse` handles the 7-digit fractional seconds natively in V8.

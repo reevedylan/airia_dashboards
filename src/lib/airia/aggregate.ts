@@ -154,6 +154,22 @@ export interface Facts {
   cIn: number[]; cCa: number[]; cOu: number[]; cWr: number[]; cOt: number[]
 }
 
+/**
+ * Totals for the window immediately before this one, of equal length and
+ * non-overlapping. Kept as per-user scalars rather than a second fact table:
+ * the KPI tiles only need three numbers, and the user filter only needs them
+ * split by user.
+ *
+ * Arrays are parallel to `RangeBlock.users`.
+ */
+export interface PreviousWindow {
+  from: number
+  to: number
+  spend: number[]
+  tokens: number[]
+  executions: number[]
+}
+
 export interface RangeBlock {
   bucketMs: number
   bucketCount: number
@@ -162,6 +178,7 @@ export interface RangeBlock {
   users: string[]
   models: string[]
   facts: Facts
+  previous: PreviousWindow
 }
 
 export interface AggregateResult {
@@ -171,6 +188,9 @@ export interface AggregateResult {
     fetchedCount: number
     /** Rows kept by the source filter — what the figures are built from. */
     rowCount: number
+    /** Rows on the pre-2026-06-18 convention, where `total` excludes
+     *  `additionalCharges`. Reconciled, just against the older rule. */
+    legacyTotals: number
     rowsPlaced: number
     amountsReconciled: number
     amountsMismatched: number
@@ -211,21 +231,29 @@ export function aggregate(
   const warn = (m: string) => warnings.add(m)
 
   const ranges = Object.entries(RANGE_SPECS).map(([key, spec]) => {
-    const bounds = Z.boundaries(spec.bucketMs, spec.count, opts.now)
+    // Twice the bars, so the older half is the immediately preceding window
+    // of equal length. Boundaries are walked, not arithmetic, so the previous
+    // window lands on the same local-time grid across a DST change.
+    const all = Z.boundaries(spec.bucketMs, spec.count * 2, opts.now)
+    const bounds = all.slice(spec.count)
     return {
       key: key as RangeName,
       spec,
       bounds,
+      prevFrom: all[0],
+      prevTo: bounds[0],
       index: new Map(bounds.map((b, i) => [b, i])),
       facts: new Map<string, ReturnType<typeof emptyFact>>(),
       users: new Map<string, number>(),
       models: new Map<string, number>(),
+      prev: new Map<number, { spend: bigint; tokens: number; ex: number }>(),
     }
   })
 
   const providers: Record<string, number> = {}
   let reconciled = 0
   let mismatched = 0
+  let legacyTotals = 0
   let placed = 0
 
   for (const row of scoped) {
@@ -238,9 +266,23 @@ export function aggregate(
     const amtCached = toScaled(row.cachedInputTokenAmountConsumed)
     const amtOut = toScaled(row.outputTokenAmountConsumed)
 
-    // Verify the money adds up, per row. This is the contract the whole
-    // dashboard rests on, so it is checked rather than assumed.
-    if (amtIn + amtCached + amtOut + write + other === toScaled(row.totalTokenAmountConsumed)) reconciled++
+    /*
+     * Verify the money adds up, per row — this is the contract the dashboard
+     * rests on, so it is checked rather than assumed.
+     *
+     * There are TWO conventions. Airia changed `totalTokenAmountConsumed` on
+     * 2026-06-18: before that it excluded `additionalCharges`, after it
+     * includes them. A clean cutover, no overlap. Accepting only the new rule
+     * flagged 65% of older rows as corrupt when they were merely older.
+     *
+     * Spend is summed from the COMPONENTS, never from `total`, so the figures
+     * are right either way. Keep it that way — `total` is not dependable.
+     */
+    const parts = amtIn + amtCached + amtOut
+    const charges = write + other
+    const reportedTotal = toScaled(row.totalTokenAmountConsumed)
+    if (parts + charges === reportedTotal) reconciled++
+    else if (parts === reportedTotal) { reconciled++; legacyTotals++ }
     else mismatched++
 
     const provider = row.providerType ?? '(unknown)'
@@ -252,7 +294,22 @@ export function aggregate(
 
     for (const r of ranges) {
       const bi = r.index.get(Z.floor(t, r.spec.bucketMs))
-      if (bi === undefined) continue               // older than this range's window
+
+      if (bi === undefined) {
+        // Not in the current window. It may still be in the one before it,
+        // which the KPI tiles compare against.
+        if (t >= r.prevFrom && t < r.prevTo) {
+          if (!r.users.has(user)) r.users.set(user, r.users.size)
+          const ui = r.users.get(user)!
+          let acc = r.prev.get(ui)
+          if (!acc) { acc = { spend: 0n, tokens: 0, ex: 0 }; r.prev.set(ui, acc) }
+          acc.spend += amtIn + amtCached + amtOut + write + other
+          acc.tokens += tok.input + tok.cached + tok.output
+          acc.ex += 1
+        }
+        continue
+      }
+
       counted = true
       if (!r.users.has(user)) r.users.set(user, r.users.size)
       if (!r.models.has(model)) r.models.set(model, r.models.size)
@@ -287,6 +344,13 @@ export function aggregate(
       users: [...r.users.keys()],
       models: [...r.models.keys()],
       facts: c,
+      previous: {
+        from: r.prevFrom,
+        to: r.prevTo,
+        spend: [...r.users.values()].map((ui) => fromScaled(r.prev.get(ui)?.spend ?? 0n)),
+        tokens: [...r.users.values()].map((ui) => r.prev.get(ui)?.tokens ?? 0),
+        executions: [...r.users.values()].map((ui) => r.prev.get(ui)?.ex ?? 0),
+      },
     }
   }
 
@@ -295,6 +359,7 @@ export function aggregate(
     stats: {
       fetchedCount: rows.length,
       rowCount: scoped.length,
+      legacyTotals,
       rowsPlaced: placed,
       amountsReconciled: reconciled,
       amountsMismatched: mismatched,
@@ -305,9 +370,14 @@ export function aggregate(
   }
 }
 
-/** Earliest instant any range needs, so one fetch covers them all. */
+/**
+ * Earliest instant any range needs, so one fetch covers them all.
+ *
+ * Twice each range's bar count, because the KPI tiles compare against the
+ * immediately preceding window of equal length — for 3M that is 180 days.
+ */
 export function earliestBoundary(now: number, zone: string): number {
   const Z = makeZone(zone)
   return Math.min(...Object.values(RANGE_SPECS)
-    .map((s) => Z.boundaries(s.bucketMs, s.count, now)[0]))
+    .map((s) => Z.boundaries(s.bucketMs, s.count * 2, now)[0]))
 }
