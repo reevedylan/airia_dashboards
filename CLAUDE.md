@@ -74,8 +74,9 @@ window; `earliestBoundary()` folds over it rather than doing its own
 arithmetic. Adding or changing a range means editing `RANGE_SPECS` in
 `aggregate.ts` and `RANGES` in `TimeRangeBar.tsx` together.
 
-**Buckets are aligned to local time, not UTC** (`ZONE`, default
-`Australia/Sydney`). The 12-hour buckets must fall on local midnight and noon
+**Buckets are aligned to local time, not UTC** (`ZONE` in
+`src/data/window.ts`, resolved once at load: `?tz=` in the URL, else the
+browser's own zone, else `Australia/Sydney`). The 12-hour buckets must fall on local midnight and noon
 to read as AM/PM; UTC alignment would put them at 10am/10pm and cut every
 Australian day in half. `localFloor()` does this in **two passes** — the
 offset is taken at `t`, then re-taken at the candidate boundary — because on a
@@ -117,6 +118,35 @@ so a window spanning a transition really is 168 hours give or take one:
 Bar counts stay exactly as `RANGE_SPECS` declares, and every window starts
 on a bucket boundary. Checked against all five ranges on an ordinary day
 and on both transitions.
+
+### Whose local time
+
+`ZONE` was hardcoded to `Australia/Sydney` — correct for the tenant this was
+built against, wrong for everyone else, and silently so: a reader in London
+had their days cut at 14:00 or 15:00 local while the cards printed
+"Australia/Sydney" underneath. It now takes `?tz=Europe/London` from the
+URL, then the browser's own zone, then Sydney.
+
+Two things to keep:
+
+- **A bad `?tz=` must not take the page with it.** An unknown name makes
+  `Intl` throw, so a candidate is validated before it is used and falls
+  through to the next.
+- **It resolves ONCE, not reactively.** The offset cache, the day formatter
+  and every bucket boundary derive from it; a zone that could change under a
+  fold would have to invalidate all of them, for a setting nobody changes
+  twice in a session. Reload with a different `tz`.
+
+The daylight-saving machinery was only ever exercised against Sydney, so it
+has now been checked across eight zones — including two with no DST, `+5:30`
+and `+9:30` offsets, and Lord Howe Island, whose DST shift is 30 minutes.
+In every one: bar counts exactly as `RANGE_SPECS` declares, every boundary
+on a wall-clock multiple of its bucket, every daily boundary on local
+midnight, and AM/PM correct on the half-day buckets.
+
+The zone abbreviation falls back to `GMT+1` / `GMT-4` / `GMT+5:30` outside
+Australia, because the label formatter asks for `en-AU` to get AEST/AEDT.
+Unambiguous, if less idiomatic than BST or EDT.
 
 ## Labelling a bucket
 

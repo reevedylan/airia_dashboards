@@ -94,9 +94,10 @@ page — which is how the aggregation is tested against real rows.
 `scripts/measure-load.mjs` reports load timings and request counts. All of
 them read the key from `AIRIA_API_KEY`, never an argument.
 
-Buckets align to `Australia/Sydney` (`ZONE` in `src/data/airia.ts`) and
-history is capped at Airia's 365-day log retention; nothing else needs
-configuring.
+Buckets align to **your own timezone** — days are cut at your midnight, not
+someone else's. Add `?tz=Europe/London` to look at a tenant's traffic in the
+zone their team works in. History is capped at Airia's 365-day log
+retention; nothing else needs configuring.
 
 **`CLAUDE.md` is the real documentation** — the data contract, the reducer
 table, the time-zone and daylight-saving rules, and the mistakes worth not

@@ -20,8 +20,59 @@ export interface DayRange {
   to: Day
 }
 
-export const ZONE = 'Australia/Sydney'
 export const DAY_MS = 86_400_000
+
+/**
+ * The zone every bucket is aligned to.
+ *
+ * It was hardcoded to `Australia/Sydney`, which is right for the tenant this
+ * was built against and wrong for everyone else: a reader in London would
+ * have had their days cut at 14:00 or 15:00 local while the cards printed
+ * "Australia/Sydney" underneath. Buckets mean nothing unless they land on
+ * the reader's own midnight.
+ *
+ * Resolved ONCE, at module load, in this order:
+ *
+ *   1. `?tz=Europe/London` in the URL — for sharing a view, or for looking
+ *      at a tenant's traffic in the zone their team works in rather than
+ *      your own.
+ *   2. The browser's own zone.
+ *   3. `Australia/Sydney`, which is where this started.
+ *
+ * Once rather than reactively because everything downstream — the offset
+ * cache, the day formatter, every bucket boundary — is derived from it, and
+ * a zone that could change under a fold would have to invalidate all of it
+ * for a setting nobody changes twice in a session. Change it by reloading
+ * with a different `tz`.
+ */
+function resolveZone(): string {
+  const candidates = [
+    new URLSearchParams(globalThis.location?.search ?? '').get('tz'),
+    // Always a valid IANA name where it exists at all.
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    FALLBACK_ZONE,
+  ]
+  for (const zone of candidates) {
+    // An unknown name makes Intl THROW, which would take the page with it —
+    // so a bad `?tz=` has to fall through rather than break the dashboard.
+    if (zone && isZone(zone)) return zone
+  }
+  return FALLBACK_ZONE
+}
+
+const FALLBACK_ZONE = 'Australia/Sydney'
+
+function isZone(name: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: name })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const ZONE = resolveZone()
+
 /** Offsets are cached inside, so one instance for the life of the module. */
 const Z = makeZone(ZONE)
 
