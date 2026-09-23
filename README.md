@@ -1,355 +1,94 @@
 # Airia gateway usage dashboard
 
-A spend-and-usage dashboard for Airia's LLM gateway. Paste an API key and it
-builds itself: token volume, cost broken down by billing category, per-model
-and per-user breakdowns, and a rate card showing what each model actually
-costs.
+Paste an Airia API key and it builds itself: what the LLM gateway cost, who
+spent it, on which models, through which gateway.
 
 A key is scoped to one tenant, so a different key gives you that tenant's
-dashboard. That is the point — it is meant to be handed to a customer who runs
-it against their own data.
+dashboard. That's the point — it's meant to be handed to a customer to run
+against their own data.
+
+## The questions it answers in one look
+
+- **What are we spending, and is that up or down?** Spend, tokens and
+  executions, each against the equal period immediately before — so "$1,847,
+  up 371% on the previous three months", not a number with no context.
+- **What are we paying *for*?** Spend is split by billing category — write
+  cache, cached input, output, input — because they price very differently and
+  the mix is usually the story. On this tenant write-cache alone is the single
+  largest line item.
+- **Which model actually costs what?** A per-row rate card in real `$/M`,
+  computed *within* each token category. A blended rate ranks models by cache
+  hit rate rather than by price, and on real data it put the cheapest model
+  per token at the top as the most expensive.
+- **Who or what is driving it?** Break down by **model**, **user** or
+  **gateway**, with spend share, tokens in/out and the rate card on every row.
+- **Was it always like this?** Any window from one day to a year, and the
+  grain follows the span, so a day of traffic and a year of it are both
+  readable without choosing a bucket size.
+- **What does one slice look like on its own?** Filter to some users, or a
+  gateway, or both, and everything recomputes — tiles, charts, every
+  breakdown, and the comparison period. Click a row and it's drawn alone with
+  the scoped whole behind it in grey, on the same scale, so absolute size and
+  share read at once.
 
 Charts are hand-rolled SVG. There is no charting library.
 
----
+![Gateway usage dashboard](docs/dashboard.png)
 
 ## Quick start
 
 ```bash
 npm install
-npm run dev                    # http://localhost:5173
+npm run dev        # http://localhost:5173, then paste a key
 ```
 
-Paste an Airia API key in the page. Nothing else to configure.
+For the built app: `npm run build && npm start` (http://localhost:4173).
 
-To run the built app instead:
+## Running it locally
 
-```bash
-npm run build && npm start     # http://localhost:4173
-```
+The Airia API sends no CORS headers, so a browser can't call it directly
+however valid your key. The page calls `/airia/…` on its **own** origin and
+something local forwards it — Vite's proxy in dev, `server.mjs` for the
+build. That makes this a local tool, not a link you can send, and it's why
+`server.mjs` binds to `127.0.0.1`: every request through the proxy carries
+the caller's key.
 
-## Why it runs locally
+Nothing is stored. Rows are fetched into the tab, aggregated in the browser
+and dropped when you close it; the key lives in memory unless you opt into
+`sessionStorage`, and is only ever sent as a request header. The repo is
+public and rows carry user emails, so nothing tenant-shaped touches disk.
 
-**The Airia API sends no `Access-Control-Allow-Origin` header.** A cross-origin
-browser fetch is blocked and the preflight for `x-api-key` returns 403. So a
-static page where someone pastes a key cannot work, however valid the key.
+## Stack
 
-Instead the page calls `/airia/…` on its **own** origin and something local
-forwards it — Vite's proxy in development, `server.mjs` for the built app:
-
-```
-browser ──/airia/…──▶ same origin ──▶ proxy ──▶ prodaus.api.airia.ai
-                     (no CORS)              (server-to-server)
-```
-
-That makes this a local tool, not a link you can send. Each tenant runs their
-own copy.
-
-> **Don't host the proxy for other people.** Every request through it carries
-> the caller's API key, so whoever runs it can read those keys. `server.mjs`
-> binds to `127.0.0.1` for that reason.
->
-> If you want a link you *can* share, the blocker is a single upstream change:
-> CORS headers on `api/marketplace/v1/AIOperationExecutions`. With those, this
-> becomes a static page anyone can open.
-
-## Where the data lives
-
-Nowhere. Rows are fetched into the tab, aggregated in the browser, and dropped
-when you close it. No server stores anything and nothing touches disk.
-
-The key is held in memory. *Remember for this browser tab* is opt-in and uses
-`sessionStorage`, which clears when the tab closes — leave it off on a shared
-machine. The key is only ever sent as a request header, never in a URL where it
-would reach logs and browser history.
-
----
-
-## What it shows
-
-**Three KPI tiles** — token spend, tokens, executions — for the current scope,
-each with a change against the immediately preceding window of equal length
-(14D compares against the 14 days before it). The arrow is deliberately
-**neutral**: more spend is neither good nor bad, so colouring it green or red
-would assert a judgement the number cannot make. A zero baseline reads "new"
-rather than a divide-by-zero. The comparison respects the user filter and is
-independent of isolate.
-
-**Two charts**, each switchable between *Daily* (stacked bars by category) and
-*Cumulative* (running total from zero at the window start):
-
-| Chart | Categories |
-|---|---|
-| Tokens | cached input · input · output |
-| Token spend | write cache · cached input · output · input · other |
-
-They stay separate deliberately. They are different signals and they diverge
-when the usage mix shifts toward pricier models.
-
-**A breakdown card** with three tabs, *By model*, *By user* and *By gateway*,
-sharing one column set: spend, % spend, tokens in, tokens out, % tokens, and the per-row
-rate card (`in $/M`, `out $/M`). Searchable, sortable, show-top-N.
-
-### Time ranges
-
-Each range has a fixed bucket size, so what you see never depends on how wide
-the window happens to be:
-
-| Range | Bucket | Extent | Bars |
-|---|---|---|---|
-| 24H | 15 min | 24 hours | 96 |
-| 7D | 2 hr | 7 days | 84 |
-| 14D | 4 hr | 14 days | 84 |
-| 1M | 12 hr | 1 calendar month | 56–62 |
-| 3M | 1 day | 3 calendar months | 89–92 |
-| custom | 15 min – 4 days | 1 day – 1 year | 60–118 |
-
-**1M and 3M are measured in calendar months, not in days**, because a month
-isn't 30 days. A 1M window ending 3 April starts on 4 March; a 3M window
-ending 3 June starts on 4 March as well. One ending 31 March starts on
-1 March — a whole calendar March — because the arithmetic clamps rather than
-rolling over. The bar count moves with the month, which is the point: a
-fixed 30-day window drifts off the calendar a little further every time you
-step it. Comparisons follow the same rule, so February is compared against
-January rather than against "the previous 30 days".
-
-Buckets align to **local time** (`Australia/Sydney` by default), not UTC. The
-12-hour buckets have to land on midnight and noon to read as AM/PM, and daily
-buckets on local midnight — UTC alignment would put them at 10am/10pm and split
-every Australian day in half. Daylight saving is handled.
-
-### Moving the window
-
-Duration and position are separate controls. The range buttons pick how long
-a window is; the chevrons step it back or forward by its own length. Clicking
-a preset **always jumps to now** — it discards wherever the window had been
-moved to, including when you re-click the preset already selected, which is
-the obvious way to get back to the present.
-
-### Picking your own range
-
-The calendar picks a start and an end: click a day, the span previews as you
-move, click again to apply. The same day twice is a single day, and it does
-not matter which end you click first. Whole days only, in `Australia/Sydney`
-— from midnight to 23:59:59 — because a window shorter than a day is what
-the 24H preset is for.
-
-You can go back a year and no further: Airia's logs expire at 365 days, so
-anything earlier is greyed out, and once a start is down anything more than
-a year away from it greys out too. An invalid range is never selectable
-rather than rejected after the fact.
-
-**The bar size follows the span.** A custom range picks its own grain off a
-ladder — 15 min through 12 hours, then 1 to 4 days — aiming for 60 to 100
-bars, so a day of traffic and a year of it are both readable without anyone
-choosing a bucket size. The ladder reproduces each preset's own grain
-exactly, so a custom 7-day range draws the same chart as the 7D button.
-
-A preset and a custom range are alternatives: choosing one clears the other,
-and the resolved window is always spelled out next to the control.
-
-Stepping is instant: raw rows are cached, so a new window is a re-fold
-(~0.4s) rather than a re-fetch. The first load fetches the six months the
-ranges themselves need; the background then reaches for what *one step back*
-needs — three months further still, because that window has its own
-comparison period — and carries on to the one-year retention limit from
-there. A step back within a second or two of first paint waits for that
-slice; after it lands, nothing within the year costs a fetch.
-
-When something does need fetching, the dashboard you were looking at stays
-on screen, dimmed, with a progress line. It never drops back to the key
-page — only a rejected key does that.
-
-### Filtering and isolating
-
-Two different mechanisms:
-
-- **The user and gateway filters are scopes.** Searchable multi-selects
-  beside the range tabs. Pick users, or gateway configurations, or both, and
-  *everything* recomputes against only that traffic — KPI tiles, both charts,
-  all three breakdowns, and the period comparison — exactly like changing the
-  range. The two intersect, and an empty selection means all.
-- **Clicking a row isolates it.** Both charts then show that model or user
-  alone, with the *currently scoped* whole behind it in grey on the same scale,
-  so absolute shape and share read at once. Isolate sits on top of the filter
-  rather than escaping it, and only one row across both tabs can be isolated at
-  a time.
-
----
-
-## How it works
+React 19 + TypeScript + Vite. No charting, state or UI dependencies.
 
 ```
-fetchAll.ts   windowed fetch, bisecting when the API truncates
-aggregate.ts  raw rows  ──▶  one sparse fact table per range
-data/airia.ts fact table ──▶  folded series, breakdowns, totals
-App.tsx       composition
+src/theme/      colour — the only place hex values exist
+src/lib/        maths, dates, fetch + aggregation (pure, no React)
+src/components/ the chart kit
+src/data/       folds the fact table into series and breakdowns
+src/App.tsx     the dashboard
+server.mjs      serves the build and proxies /airia
 ```
 
-Each range is **one sparse fact table keyed by (bucket, user, model)**, and
-everything on the page folds out of it. It has to be that shape because the
-user filter is a real scope: filtering by user must recompute the *model*
-breakdown, which a pre-aggregated per-model series could not do. It stays cheap
-because only ~1,000 combinations actually occur across all five ranges, from
-~22k source rows.
+Each time range is **one sparse fact table** keyed by (bucket, user, model,
+gateway), and everything on the page folds out of it — which is what lets a
+filter be a real scope rather than a highlight.
 
-`src/lib/airia/aggregate.ts` is pure — no DOM, no network — and is the only
-aggregation implementation. A separate CLI ingest used to exist and drifted out
-of sync; don't reintroduce a second copy.
-
-### The API's sharp edges
-
-- **It silently truncates.** A 404 with an empty body means "response too large
-  to build", not "not found", and a 200 can return fewer `items` than
-  `totalCount`. Both, plus timeouts, mean *bisect the window and retry the
-  halves*. Checking the status code alone is not enough.
-- **Filter to `executionSourceType === 'Gateway'`.** Non-Gateway rows outnumber
-  Gateway roughly 3:1, so a missing filter inflates every figure on the page.
-  The footer prints kept-of-fetched counts so it cannot go unnoticed.
-- **Providers disagree about `input`.** Anthropic reports
-  `total = input + cached + output`; OpenAI reports `total = input + output`
-  with `input` *already including* cached. Stacking raw `input + cached` would
-  double-count on OpenAI rows, so the convention is detected per row from its
-  own arithmetic.
-- **`additionalCharges` is a dynamically-keyed map** (5-minute and 1-hour
-  write-cache variants, web-search requests). Unknown keys are summed, never
-  hardcoded.
-- **`totalTokenAmountConsumed` has two conventions.** Airia changed it on
-  **18 June 2026**: before that it *excluded* `additionalCharges`, after it
-  *includes* them — a clean cutover with no overlap. Spend is therefore summed
-  from the components and never read from `total`, which is right either way.
-  The reconciliation check accepts both rules and reports how many rows used
-  the older one; accepting only the new rule flagged 65% of older rows as
-  corrupt when they were merely older.
-- **Money arrives as 11-decimal strings** and is accumulated as scaled
-  integers, then converted once. Floats drift over 10⁵ rows.
-- **Some rows carry no user, and some no gateway.** Service-key requests have
-  no `userEmail`, and rows predating gateway attribution have no
-  `gatewayConfigurationId`. Both are grouped under explicit members rather
-  than dropped — omitting them would make every percentage wrong. Neither
-  share is stable: every row a year ago had no user, against ~1% of the last
-  30 days.
-- **Gateway names live on another endpoint** (`/v1/GatewayConfiguration`),
-  reached with the same key. Names that are duplicated get a short id beside
-  them, and gateways that have since been deleted keep their short id — the
-  endpoint lists what exists now, while executions remember what they used.
-  If the lookup is unavailable to a key, every gateway shows a short id and
-  nothing else changes.
-
-Every row's token counts and charge amounts are checked to sum to the reported
-totals, and the mismatch count is printed in the page footer. It has been zero
-on ~22k rows.
-
-### Measurement decisions that aren't obvious
-
-- **Never blend a $/M rate across token categories.** Cached input bills at
-  exactly 0.1× the input rate and output at exactly 5×, on every model. A
-  blended rate therefore ranks models by *cache hit rate* rather than by price
-  — on real data it showed the cheapest model per token as the most expensive.
-  The rate card divides cost by count within one category.
-- **Write-cache tokens have a cost but no count**, so they can never appear in
-  a per-token rate. They are a line item on the spend chart only.
-- **A running total is reduced with `max`, not `sum`.** Merging buckets for
-  display would otherwise add closing balances to each other.
-- **Rates are volume-weighted.** `LineChart` takes a `weights` array so a ratio
-  series aggregates as `Σ(v·w)/Σw`; averaging per-bucket ratios is a
-  mean-of-means and was badly out on this data.
-- **Hairline stack segments are dropped, not drawn.** Forcing a minimum height
-  on a negligible category turned it into a detached tick floating above the
-  bar. Its value still appears in the tooltip.
-
----
-
-## Colour
-
-**`src/theme/tokens.css` is the only file with colour in it.** Surfaces, ink,
-eight categorical series slots, four reserved status colours, a sequential
-ramp, plus radii and mark specs — light and dark. Components reference tokens
-by role, so re-branding is one file and nothing else changes.
-
-Three rules keep it readable:
-
-1. Series slots are assigned **in order** and never cycled. A ninth series
-   folds into `--viz-other` rather than inventing a hue.
-2. `--viz-status-*` are reserved for good/warning/serious/critical and always
-   ship beside a text label.
-3. After changing any series hex, run the validator:
-
-   ```bash
-   node scripts/validate-palette.mjs
-   ```
-
-   It measures — rather than eyeballs — lightness band, chroma floor,
-   colourblind separation (protan/deutan/tritan ΔE), normal-vision separation
-   and WCAG contrast, in both modes, and exits non-zero on failure.
-
-One trap worth knowing: the default palette seats yellow beside orange, the one
-adjacent pair that fails the colourblind gate. Stacked series skip slot 4 — see
-the `C` map in `App.tsx`.
-
----
-
-## Layout
-
-```
-src/
-  theme/       colour — the only place hex values exist
-  lib/
-    airia/     fetch + aggregation (pure, no React)
-    *.ts       scales, SVG paths, formatting, hooks
-  components/
-    charts/    LineChart, BarChart, RankTable (+ DonutChart, Sparkline, unused here)
-    primitives/Card, Legend, Tooltip, TableView, StatTile, MultiSelect, Tabs,
-               KeyGate, TimeRangeBar, Calendar
-  data/        folds the fact table into series and breakdowns
-  App.tsx      the dashboard
-scripts/
-  validate-palette.mjs   palette gate
-  shoot.mjs              headless-Chrome screenshots, incl. hover states
-server.mjs     serves the build and proxies /airia
-```
-
-`lib/` never imports from `components/`, and no component contains a colour
-literal.
-
-## Verifying a change
+## Development
 
 ```bash
 npx tsc -b && npm run build
-node scripts/validate-palette.mjs
-npm run dev                            # paste a key
+node scripts/validate-palette.mjs   # colour gate: contrast, colourblind separation
+node scripts/shoot.mjs --out /tmp/a.png --hover 600,330
 ```
 
-Then **look at it** — the validator checks colour, not layout:
+No unit suite — correctness is checked against a live tenant, plus the colour
+gate. `shoot.mjs` drives headless Chrome for layout checks and reads
+`AIRIA_API_KEY` from the environment. Buckets align to `Australia/Sydney`
+(`ZONE` in `src/data/airia.ts`) and history is capped at Airia's 365-day log
+retention; nothing else needs configuring.
 
-```bash
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless --remote-debugging-port=9222 --user-data-dir=/tmp/viz-chrome about:blank &
-
-node scripts/shoot.mjs --out /tmp/a.png
-node scripts/shoot.mjs --out /tmp/b.png --hover 600,330    # reports if the tooltip opened
-node scripts/shoot.mjs --out /tmp/c.png --click-sel '.viz-viewtoggle button:last-child'
-```
-
-Check every range, both themes, both chart views and 640px width. `--hover`
-says whether the hover layer actually opened, so a missed coordinate can't be
-mistaken for a working chart.
-
-`CLAUDE.md` holds the working notes: the data contract, the reducer table, and
-the mistakes worth not repeating.
-
-## Known gaps
-
-- **Only tested against one tenant's key.** The per-tenant path is structurally
-  sound but unverified across tenants.
-- **The bisecting fetch has now fired in anger**, though only under
-  deliberate provocation: a 400-day window was forced through it, truncated
-  at the 200,000-row response cap, split, and came back whole. It has still
-  never triggered by itself, because a 15-day chunk of this tenant's traffic
-  is a fraction of that cap.
-- **`balanceUsed` is zero throughout** — it doesn't apply to gateway traffic,
-  which bills against the caller's own provider credentials — so it isn't
-  surfaced.
-- **`totalTokens` on the gateway feed excludes cached tokens.** This dashboard
-  uses `AIOperationExecutions` instead, which reports them, but be aware if you
-  compare against the gateway feed directly.
+**`CLAUDE.md` is the real documentation** — the data contract, the reducer
+table, the time-zone and daylight-saving rules, and the mistakes worth not
+repeating. Read it before changing anything.
