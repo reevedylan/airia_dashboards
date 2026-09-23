@@ -103,7 +103,21 @@
   --viz-bar-max:      24px;  /* bars never exceed this, however wide the band */
   --viz-gap-mark:     2px;   /* surface gap between touching marks          */
   --viz-stroke-line:  2px;   /* line series weight                          */
-  --viz-area-alpha:   0.10;  /* area fill opacity — a wash, not a block     */
+  --viz-area-alpha:   0.10;  /* flat area wash, where a gradient is overkill */
+
+  /* A filled area fades DOWNWARD, from just under its own line to almost
+     nothing at the baseline, so the ink sits where the data is rather than
+     pooling in a block above the axis.
+
+     The bottom stop is not quite zero: a cumulative curve rises from zero,
+     so most of its area sits low, and a true zero made the left two thirds
+     of the fill vanish. Compared by eye at three weights — this one reads
+     across the whole area without competing with the line. */
+  --viz-area-top:     0.32;
+  --viz-area-bottom:  0.035;
+  /* The ghost fades the same way. It is grey, so it needs a touch more to
+     stay readable as "the whole" behind an isolated series. */
+  --viz-ghost-top:    0.30;
 
   --viz-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 

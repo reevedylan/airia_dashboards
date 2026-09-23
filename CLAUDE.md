@@ -584,6 +584,34 @@ Both charts switch between daily bars and a cumulative line. Two rules:
   ever merged for display, summing would add closing balances to each other.
   It is monotonic, so the largest value in a merged bucket is its close.
 
+## The area under a cumulative line
+
+`LineChart` fills an `area` series with a vertical gradient — the line's
+colour just beneath it, fading to almost nothing at the baseline. Four
+things about it are load-bearing:
+
+- **It fades from the SERIES' own peak, not the top of the plot.** Anchored
+  to the plot, the strong end of the ramp sits in empty space above the
+  data: a line topping out at three quarters of the axis gets only the
+  faint three quarters of the fade, which is how the first attempt came out
+  washed away. Each gradient's `y1` is its own highest point; `y2` is the
+  shared baseline.
+- **The bottom stop is not zero.** A cumulative curve rises from zero, so
+  most of its area sits low; a true zero made the left two thirds of the
+  fill vanish. `--viz-area-bottom` is a little above it.
+- **Ids come from `useId()`.** Two cumulative cards share the series key
+  `total`, and a duplicate gradient id silently wins for both charts.
+- **The stops carry no colour.** They read `currentColor`, set on the
+  gradient element from the series colour, so the hexes stay in the theme
+  and the opacities stay in tokens — `grep '#'` over `src/components/`
+  still finds nothing.
+
+`Sparkline` keeps the flat `--viz-area-alpha` wash: at 72x20 a gradient is
+invisible and just costs a `<defs>`.
+
+The ghost area fades the same way, from its own peak, a touch stronger
+because grey reads lighter than a series colour.
+
 ## Chart data contract
 
 Charts take parallel arrays aligned **by index**:

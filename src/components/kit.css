@@ -406,8 +406,15 @@
 .viz-rank tr[data-selected] :where(th, td):last-child { border-radius: 0 4px 4px 0; }
 
 /* Line-chart ghost: the unfiltered whole behind an isolated series. */
-.viz-ghost-area { fill: var(--viz-other); opacity: 0.16; }
 .viz-ghost-line { stroke: var(--viz-other); stroke-width: 1.5; opacity: 0.55; }
+
+/* Gradient stops for a filled area. `currentColor` picks up the series
+   colour, set on the gradient element, which keeps every hex in the theme
+   and every opacity in a token. */
+.viz-area-stop--top { stop-color: currentColor; stop-opacity: var(--viz-area-top); }
+.viz-area-stop--bottom { stop-color: currentColor; stop-opacity: var(--viz-area-bottom); }
+.viz-area-stop--ghost-top { stop-color: var(--viz-other); stop-opacity: var(--viz-ghost-top); }
+.viz-area-stop--ghost-bottom { stop-color: var(--viz-other); stop-opacity: var(--viz-area-bottom); }
 
 /* --- multi-select with search ------------------------------------------- */
 

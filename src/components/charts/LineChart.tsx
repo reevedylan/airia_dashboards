@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useSize } from '../../lib/useSize'
 import { linearScale, niceDomain, ticks, clamp, type Reducer } from '../../lib/scale'
 import { linePath, areaPath, type Pt } from '../../lib/path'
@@ -177,15 +177,29 @@ export function LineChart({
       ghostPoints,
       ghostLine: ghostPoints ? linePath(ghostPts) : null,
       ghostArea: ghostPoints ? areaPath(ghostPts, ys(y0)) : null,
+      ghostTop: Math.min(PAD.top + plotH, ...ghostPts.filter((p): p is Pt => p != null).map((p) => p.y)),
       gridlines: tickValues.map((v, i) => ({ v, y: ys(v), label: tickLabels[i] })),
       baseline: ys(y0),
       lines: reduced.map((s) => {
         const pts: (Pt | null)[] = s.points.map((v, i) => (v == null ? null : { x: xs(i), y: ys(v) }))
-        return { ...s, pts, d: linePath(pts), fill: s.area ? areaPath(pts, ys(y0)) : null }
+        /* An area fades from its OWN highest point, not from the top of the
+           plot. Anchoring it to the plot put the strong end of the ramp in
+           empty space above the data: a line peaking at three quarters of
+           the axis got only the faint three quarters of the fade. */
+        const top = Math.min(...pts.filter((p): p is Pt => p != null).map((p) => p.y))
+        return {
+          ...s, pts, d: linePath(pts),
+          top: Number.isFinite(top) ? top : PAD.top,
+          fill: s.area ? areaPath(pts, ys(y0)) : null,
+        }
       }),
       xAt: (i: number) => xs(i),
     }
   }, [w, height, x, series, zeroBased, yTickCount, yAxis, pxPerPoint, formatTick, formatValue, ghost])
+
+  /** Gradient ids have to be unique per chart INSTANCE: two cumulative cards
+   *  share series keys, and a duplicate id silently wins for both. */
+  const gid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 
   const grain = useMemo(() => grainFor((x[x.length - 1] ?? 0) - (x[0] ?? 0)), [x])
 
@@ -249,9 +263,40 @@ export function LineChart({
                 : null}
             </g>
 
+            {/*
+              One vertical gradient per filled area, spanning the PLOT rather
+              than each path's own box: the fade then means the same thing in
+              every series and on every chart, instead of stretching to fit
+              whatever height a particular curve happened to reach.
+
+              The stops carry no colour of their own — they read
+              `currentColor`, set on the gradient from the series colour — so
+              the hexes stay in the theme and the opacities stay in tokens.
+            */}
+            <defs>
+              {model.ghostArea ? (
+                <linearGradient id={`${gid}-ghost`} gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={model.ghostTop} y2={model.baseline}>
+                  <stop offset="0%" className="viz-area-stop--ghost-top" />
+                  <stop offset="100%" className="viz-area-stop--ghost-bottom" />
+                </linearGradient>
+              ) : null}
+              {model.lines.filter((s) => s.fill).map((s) => (
+                <linearGradient
+                  key={s.key}
+                  id={`${gid}-${s.key}`}
+                  gradientUnits="userSpaceOnUse"
+                  x1="0" x2="0" y1={s.top} y2={model.baseline}
+                  style={{ color: s.color }}
+                >
+                  <stop offset="0%" className="viz-area-stop--top" />
+                  <stop offset="100%" className="viz-area-stop--bottom" />
+                </linearGradient>
+              ))}
+            </defs>
+
             {model.ghostArea ? (
               <g aria-hidden="true">
-                <path d={model.ghostArea} className="viz-ghost-area" />
+                <path d={model.ghostArea} fill={`url(#${gid}-ghost)`} />
                 <path d={model.ghostLine ?? ''} className="viz-ghost-line" fill="none" />
               </g>
             ) : null}
@@ -260,7 +305,7 @@ export function LineChart({
               const dim = activeSeries != null && activeSeries !== s.label
               return (
                 <g key={s.key} opacity={dim ? 0.22 : 1} style={{ transition: 'opacity var(--viz-dur-base) var(--viz-ease)' }}>
-                  {s.fill ? <path d={s.fill} fill={s.color} fillOpacity="var(--viz-area-alpha)" /> : null}
+                  {s.fill ? <path d={s.fill} fill={`url(#${gid}-${s.key})`} /> : null}
                   <path
                     d={s.d}
                     fill="none"
