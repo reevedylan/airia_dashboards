@@ -265,8 +265,7 @@ on ~22k rows.
 **`src/theme/tokens.css` is the only file with colour in it.** Surfaces, ink,
 eight categorical series slots, four reserved status colours, a sequential
 ramp, plus radii and mark specs — light and dark. Components reference tokens
-by role, so re-branding is one file and nothing else changes. There is a live
-swatch sheet at the bottom of the dashboard that reads the computed values.
+by role, so re-branding is one file and nothing else changes.
 
 Three rules keep it readable:
 

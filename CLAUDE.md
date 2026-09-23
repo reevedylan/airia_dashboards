@@ -829,7 +829,7 @@ Then **look at it** — the validator checks colour, not layout:
 
 node scripts/shoot.mjs --out /tmp/a.png
 node scripts/shoot.mjs --out /tmp/b.png --hover 600,330        # says if the tooltip opened
-node scripts/shoot.mjs --out /tmp/c.png --click-sel '.sheet > summary'
+node scripts/shoot.mjs --out /tmp/c.png --click-sel '.viz-anchor__date'
 ```
 
 Check every range preset, both themes, and 640px width. `--hover` reports

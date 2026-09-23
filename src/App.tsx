@@ -15,7 +15,6 @@ import {
 import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateways'
 import { NO_GATEWAY } from './lib/airia/aggregate'
 import { useApiKey, maskKey } from './lib/apiKey'
-import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
 
 /**
@@ -676,8 +675,6 @@ export default function App() {
         {' '}generated {new Date(data!.meta.generatedAt).toLocaleString('en-GB')}
         {load.history ? <> · <HistoryNote history={load.history} /></> : null}
       </p>
-
-      <PaletteSheet />
     </div>
   )
 }
