@@ -8,7 +8,7 @@ import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
-  previousTotals, delta, dayOf, endOfDay, stepWindow, oldestEndDay, retentionFloor,
+  previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
   stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
   type Dimension, type BreakdownRow, type History, type DayRange, type Scope,
 } from './data/airia'
@@ -185,14 +185,6 @@ export default function App() {
     /* "Now" means the live window of whichever preset is selected, which
        is also the way out of custom mode. */
     onNow: () => { setAnchor(null); setCustom(null) },
-    /* The END of the window, not the start of its last bucket. With a
-       multi-day grain those differ: a 1 Mar – 31 Aug range buckets in twos
-       and its last bar STARTS on the 30th, which made the chip disagree
-       with the dates that were actually picked. */
-    resolved: block
-      ? `${extentLabel(block.x[0])} – ${extentLabel(custom ? endOfDay(custom.to) : block.x[block.x.length - 1])}`
-      : undefined,
-    stale: busy,
     window: { from: startDay, to: endDay },
     maxDay: today,
     minDay: floorDay,

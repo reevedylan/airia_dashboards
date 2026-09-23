@@ -310,6 +310,36 @@ The counted presets (24H, 7D, 14D) still use the original instant-keyed
 lookup and are untouched by this — including the April defect noted under
 **Don't walk the grid backwards**, which still applies to them.
 
+## Toolbar layout: two zones, nothing that appears
+
+The toolbar is `.viz-toolbar__controls` (range, anchor, filters) beside
+`.viz-toolbar__actions` (key chip, theme). The controls wrap among
+themselves; the actions keep the right edge. It was one flat `flex-wrap`
+row with the actions pushed over by `margin-left: auto`, which meant
+anything appearing on the left could shove them onto a line of their own —
+and did, once the gateway filter used up the slack: stepping the window
+back re-laid-out the whole toolbar at 1400px.
+
+Same rule as the card header, one row up: **a control that comes and goes
+moves everything beside it.** So the off-live state does not add a chip.
+"Now" is always in the anchor group, disabled when there is nowhere to
+jump to, and "you are in history" is a tinted border on the control you
+would act on. That also removed a duplication — the chip named the window
+the date button beside it was already naming.
+
+Two details worth keeping:
+
+- **Reserve the widest label.** `.viz-anchor__daylabel` has a floor width
+  per shape (a range is wider than a single day) because tabular numerals
+  fix the digits but not the letters, and "Sept" being a character longer
+  than "Mar" was enough to slide the filters. Verified: three steps back,
+  nothing moves by a pixel.
+- **`--viz-seq-100` is not pale in dark mode.** It is the ramp's lightest
+  step, which is near-white in light mode and a mid blue in dark, so
+  filling a control with it swamps the dark toolbar. Tint a border, or use
+  `--viz-surface-active` with focus-coloured text, when a marker has to
+  read the same in both.
+
 ## Never go back to the key gate mid-session
 
 `App.tsx` renders `KeyGate` when there is **no key, or the key was rejected**

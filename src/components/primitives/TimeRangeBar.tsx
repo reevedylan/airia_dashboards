@@ -20,9 +20,6 @@ export interface AnchorControls {
   atNow: boolean
   /** True when the window already reaches the oldest retained data. */
   atOldest?: boolean
-  /** The resolved window — shown in BOTH modes, since a custom range has no
-   *  "now" to fall back to. */
-  resolved?: string
   /** The window on screen, as civil days: banded in the calendar, and named
    *  on the button. */
   window: { from: string; to: string }
@@ -32,9 +29,6 @@ export interface AnchorControls {
   maxSpanDays?: number
   /** One line under the calendar grid, when no selection is in progress. */
   note?: React.ReactNode
-  /** True while a fetch is in flight: the resolved chip then describes the
-   *  window still DRAWN rather than the one being fetched, and dims. */
-  stale?: boolean
   /** True when the window came from the calendar rather than a preset. */
   custom?: boolean
 }
@@ -65,34 +59,37 @@ export interface TimeRangeBarProps {
  */
 export function TimeRangeBar({ value, onChange, anchor, filters, actions }: TimeRangeBarProps) {
   return (
+    /*
+      Two zones, not one wrapping row.
+      ------------------------------------------------------------------
+      Everything used to sit in a single `flex-wrap` row with the actions
+      pushed right by `margin-left: auto`, which meant any control that
+      appeared could shove them onto a line of their own. It did: adding
+      the gateway filter used up the slack, and the off-live chip tipped it
+      over, so stepping the window back re-laid-out the whole toolbar.
+
+      The controls now wrap among THEMSELVES and the actions keep the right
+      edge, so what changes on the left cannot move what is on the right.
+    */
     <div className="viz-toolbar">
-      <div className="viz-segmented" role="group" aria-label="Window duration">
-        {RANGES.map((r) => (
-          <button
-            key={r}
-            type="button"
-            className="viz-segmented__btn"
-            aria-pressed={value === r}
-            onClick={() => onChange(r)}
-          >
-            {r}
-          </button>
-        ))}
+      <div className="viz-toolbar__controls">
+        <div className="viz-segmented" role="group" aria-label="Window duration">
+          {RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              className="viz-segmented__btn"
+              aria-pressed={value === r}
+              onClick={() => onChange(r)}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+
+        {anchor ? <AnchorBar range={value} {...anchor} /> : null}
+        {filters}
       </div>
-
-      {anchor ? <AnchorBar range={value} {...anchor} /> : null}
-
-      {/* Shown whenever the window is not the live preset — which includes
-          every custom range, since a custom range has no "now" to be at. */}
-      {anchor && (!anchor.atNow || anchor.custom) ? (
-        <span className="viz-anchor__resolved" data-stale={anchor.stale ? '' : undefined}>
-          {anchor.custom ? <span className="viz-anchor__tag">Custom</span> : null}
-          {anchor.resolved}
-          <button type="button" onClick={anchor.onNow}>Jump to now</button>
-        </span>
-      ) : null}
-
-      {filters}
       {actions ? <div className="viz-toolbar__actions">{actions}</div> : null}
     </div>
   )
@@ -103,8 +100,10 @@ export function TimeRangeBar({ value, onChange, anchor, filters, actions }: Time
  * the pair reads as one row of controls rather than two unrelated widgets.
  */
 function AnchorBar({
-  range, onStep, onSelectRange, atNow, atOldest, window: win, maxDay, minDay, maxSpanDays, note, custom,
+  range, onStep, onSelectRange, onNow, atNow, atOldest, window: win, maxDay, minDay, maxSpanDays, note, custom,
 }: AnchorControls & { range: RangeKey | null }) {
+  /** Live means the latest window of a preset: a custom range never is. */
+  const live = atNow && !custom
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -153,7 +152,9 @@ function AnchorBar({
   const stepLabel = custom ? 'range' : range
 
   return (
-    <div className="viz-anchor" role="group" aria-label="Window position" ref={root}>
+    /* `data-past` is the "you are looking at history" signal the chip used
+       to carry, moved to the control you would act on. */
+    <div className="viz-anchor" role="group" aria-label="Window position" ref={root} data-past={live ? undefined : ''}>
       {/* Stepping past retention would show a window the source has
           already expired. */}
       <button
@@ -178,7 +179,12 @@ function AnchorBar({
         onClick={() => setOpen((v) => !v)}
       >
         <CalendarIcon />
-        <span className="viz-anchor__daylabel">{spanLabel(win.from, win.to)}</span>
+        {/* A range and a single day reserve different widths, each wide
+            enough for its longest form, so a month name growing from "Mar"
+            to "Sept" cannot nudge everything to its right. */}
+        <span className="viz-anchor__daylabel" data-range={win.from === win.to ? undefined : ''}>
+          {spanLabel(win.from, win.to)}
+        </span>
       </button>
 
       {/* Stepping past now would show a window that has not happened. */}
@@ -191,6 +197,22 @@ function AnchorBar({
         onClick={() => onStep(1)}
       >
         <ChevronRight />
+      </button>
+
+      {/*
+        Always here, disabled when there is nowhere to jump to.
+        It used to be a chip that appeared beside the control, which both
+        re-laid-out the toolbar on every step and said the dates twice —
+        the button to its left already names the window.
+      */}
+      <button
+        type="button"
+        className="viz-anchor__now"
+        disabled={live}
+        title={live ? 'Already showing the latest window' : 'Return to the live window'}
+        onClick={onNow}
+      >
+        Now
       </button>
 
       {open ? (
