@@ -166,13 +166,6 @@ export function makeZone(zone: string) {
     return b
   }
 
-  /** The `count` bucket starts ending with the one containing `at`. */
-  const boundaries = (size: number, count: number, at: number): number[] => {
-    const out = [floor(at, size)]
-    while (out.length < count) out.unshift(floor(out[0] - 1, size))
-    return out
-  }
-
   /**
    * Bucket starts across the whole local days `from`..`to`, inclusive.
    *
@@ -244,7 +237,7 @@ export function makeZone(zone: string) {
     return dayISO(+p.year, +p.month, +p.day)
   }
 
-  return { offsetAt, floor, boundaries, dayGrid, slot, midnight, civil }
+  return { offsetAt, floor, dayGrid, slot, midnight, civil }
 }
 
 /* ------------------------------------------------------------ normalise -- */
@@ -425,9 +418,27 @@ export function windowFor(
   at: number,
 ): Window {
   if (!isCalendar(spec)) {
-    // Twice the bars, so the older half is the immediately preceding window
-    // of equal length.
-    const all = Z.boundaries(spec.bucketMs, spec.count * 2, at)
+    /*
+     * Built from the same forward day grid the calendar ranges use, then
+     * cut to the last `count * 2` boundaries — the older half being the
+     * window immediately before.
+     *
+     * It used to walk backwards a bucket at a time, which was wrong on the
+     * night the clocks go back: two instants an hour apart both survive the
+     * two-pass floor, so a 7D window ending just after it came out 167
+     * hours long, started an hour off midnight, and carried a spurious
+     * one-hour bar. Generating forwards makes every boundary a wall-clock
+     * multiple of the bucket, which is what the buckets claim to be.
+     *
+     * The consequence is honest rather than hidden: a window spanning a
+     * transition is still exactly `count` bars of wall-clock time, so one
+     * of them is genuinely an hour longer or shorter and the window's real
+     * duration is 168 hours give or take one.
+     */
+    const span = Math.ceil((spec.count * 2 * spec.bucketMs) / 86_400_000) + 2
+    const endDay = Z.civil(at)
+    const grid = Z.dayGrid(spec.bucketMs, addDays(endDay, -span), endDay).filter((b) => b <= at)
+    const all = grid.slice(-spec.count * 2)
     const bounds = all.slice(spec.count)
     return { bounds, prevFrom: all[0], prevTo: bounds[0] }
   }
@@ -510,19 +521,12 @@ export function aggregate(
   /**
    * How a row finds its bar.
    *
-   * Counted ranges keep the original instant-keyed lookup, so 24H, 7D and
-   * 14D are untouched. Everything built by `dayGrid` — the calendar ranges
-   * and any custom window — is keyed by WALL-CLOCK SLOT instead, which is
-   * how that grid defines its boundaries in the first place. The two agree
-   * by construction, including on the night the clocks go back, where
-   * `floor` lands on a boundary that is not in the grid and the row falls
-   * through.
+   * By WALL-CLOCK SLOT, which is how `dayGrid` places the boundaries in the
+   * first place, so the two agree by construction — including on the night
+   * the clocks go back, where flooring to a boundary lands on one that is
+   * not in the grid and the row falls through entirely.
    */
-  const placer = (bucketMs: number, w: Window, wall: boolean, until?: number) => {
-    if (!wall) {
-      const index = new Map(w.bounds.map((b, i) => [b, i]))
-      return (t: number) => index.get(Z.floor(t, bucketMs))
-    }
+  const placer = (bucketMs: number, w: Window, until?: number) => {
     const index = new Map<number, number>()
     if (bucketMs <= DAY) {
       w.bounds.forEach((b, i) => index.set(Z.slot(b, bucketMs), i))
@@ -545,13 +549,13 @@ export function aggregate(
     return (t: number) => index.get(Z.slot(t, DAY))
   }
 
-  const build = (key: string, bucketMs: number, w: Window, wall: boolean, until?: number) => ({
+  const build = (key: string, bucketMs: number, w: Window, until?: number) => ({
     key,
     bucketMs,
     bounds: w.bounds,
     prevFrom: w.prevFrom,
     prevTo: w.prevTo,
-    place: placer(bucketMs, w, wall, until),
+    place: placer(bucketMs, w, until),
     facts: new Map<string, ReturnType<typeof emptyFact>>(),
     users: new Map<string, number>(),
     models: new Map<string, number>(),
@@ -566,9 +570,9 @@ export function aggregate(
      so everything downstream, filters and breakdowns included, works on it
      without knowing it is custom. */
   const ranges = Object.entries(RANGE_SPECS)
-    .map(([key, spec]) => build(key, spec.bucketMs, windowFor(Z, spec, opts.now), isCalendar(spec)))
+    .map(([key, spec]) => build(key, spec.bucketMs, windowFor(Z, spec, opts.now)))
     .concat(opts.custom
-      ? [build('custom', opts.custom.bucketMs, customWindow(Z, opts.custom), true, opts.custom.to)]
+      ? [build('custom', opts.custom.bucketMs, customWindow(Z, opts.custom), opts.custom.to)]
       : [])
 
   const providers: Record<string, number> = {}

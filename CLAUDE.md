@@ -81,20 +81,37 @@ transition day's bucket is genuinely 23 or 25 hours long.
 
 ### Don't walk the grid backwards
 
-A calendar window's boundaries come from `dayGrid()`, which builds forwards
-over civil days and places each bucket start at the instant whose LOCAL
-clock reads a multiple of the bucket size.
+Every window's boundaries come from `dayGrid()`, which builds forwards over
+civil days and places each bucket start at the instant whose LOCAL clock
+reads a multiple of the bucket size. Rows find their bar the same way, by
+wall-clock slot, so grid and placement agree by construction.
 
-It cannot be a backward walk of `floor(b - 1, size)`. On the night daylight
-saving ENDS the local day is 25 hours long, and two instants an hour apart
-are both fixed points of the two-pass floor — so the walk emitted a spurious
-one-hour bucket and a three-month window came out 93 bars instead of 92.
-Stepping back by `size` instead breaks the other way: on the 23-hour day it
-overshoots and skips a day entirely. Measured, in both directions.
+Neither can be a backward walk of `floor(b - 1, size)`. On the night
+daylight saving ENDS the local day is 25 hours long, and two instants an
+hour apart are both fixed points of the two-pass floor. That cost two
+separate bugs:
 
-What comes out is right on both nights: the April window has one 25-hour
-daily bucket and one 13-hour half-day, the October window one 23-hour and
-one 11-hour. Those are the true lengths of those days.
+- **Boundaries.** The walk emitted a spurious one-hour bucket, so a
+  three-month window came out 93 bars instead of 92, and a 7D window ending
+  just after the transition was 167 hours long and started an hour off
+  midnight. Stepping back by `size` instead breaks the other way: on the
+  23-hour day it overshoots and skips a day.
+- **Placement.** `floor` lands on a boundary that is not in the grid, so
+  rows in the last hour of that day were **silently dropped** — measured: a
+  row at 5 Apr 23:30 floored to "5 Apr 23:00", which is nothing.
+
+What comes out is right in every range, and honest about the day rather
+than hiding it. A counted range is exactly `count` bars of WALL-CLOCK time,
+so a window spanning a transition really is 168 hours give or take one:
+
+| Window containing | 24H | 7D | 14D | 1M | 3M |
+|---|---|---|---|---|---|
+| the 25-hour night | 96 bars | 84, one 3 hr | 84, one 5 hr | 62, one 13 hr | 90, one 25 hr |
+| the 23-hour night | 96 bars | 84, one 1 hr | 84, one 3 hr | 60, one 11 hr | 92, one 23 hr |
+
+Bar counts stay exactly as `RANGE_SPECS` declares, and every window starts
+on a bucket boundary. Checked against all five ranges on an ordinary day
+and on both transitions.
 
 ## Labelling a bucket
 
@@ -306,9 +323,8 @@ window. Whole-day grains therefore index every civil day they cover,
 stopping at the window's end so a row just past it cannot land in the last
 bar.
 
-The counted presets (24H, 7D, 14D) still use the original instant-keyed
-lookup and are untouched by this — including the April defect noted under
-**Don't walk the grid backwards**, which still applies to them.
+There is one placement path for every window, counted and calendar alike.
+There used to be two, and the instant-keyed one carried the April defect.
 
 ## Toolbar layout: two zones, nothing that appears
 
