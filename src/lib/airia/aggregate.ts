@@ -21,6 +21,33 @@ export interface RawRow {
   additionalCharges?: Record<string, string | number> | null
 }
 
+/**
+ * Every field the aggregation reads, and nothing else.
+ *
+ * Kept beside `RawRow` because it IS `RawRow`: add a field there and add it
+ * here, or the new field will be silently dropped before it is ever summed.
+ *
+ * Rows are projected to this shape as they arrive, because they are held for
+ * as long as the tab is open so that moving the window is a re-fold rather
+ * than a re-fetch. A full response row costs ~780 bytes of heap; this keeps
+ * ~470, which is the difference between holding a year of history and not.
+ * Every row survives the projection — only unread fields are dropped — so
+ * the fetched-row counts the footer reconciles against are unaffected.
+ */
+const KEPT: readonly (keyof RawRow)[] = [
+  'executionDateTime', 'executionSourceType', 'providerType', 'modelName', 'userEmail',
+  'inputTokenCountConsumed', 'cachedInputTokenCountConsumed', 'outputTokenCountConsumed',
+  'totalTokenCountConsumed',
+  'inputTokenAmountConsumed', 'cachedInputTokenAmountConsumed', 'outputTokenAmountConsumed',
+  'totalTokenAmountConsumed', 'additionalCharges',
+]
+
+export function slim(row: RawRow): RawRow {
+  const out: Partial<RawRow> = {}
+  for (const k of KEPT) if (row[k] != null) (out as Record<string, unknown>)[k] = row[k]
+  return out as RawRow
+}
+
 /** Bucket size and bar count per range. Window length is count x bucketMs. */
 export const RANGE_SPECS = {
   '24H': { bucketMs: 15 * 60_000, count: 96 },

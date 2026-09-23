@@ -112,16 +112,28 @@ every Australian day in half. Daylight saving is handled.
 
 Duration and position are separate controls. The range buttons pick how long a
 window is; the chevrons step it back or forward by its own length, and the
-calendar jumps to "this duration, ending on that date". Forward is disabled at
+calendar jumps to "this duration, ending on that day". Forward is disabled at
 the live window — you can't step into the future.
+
+The calendar is a month view that picks a **day**, not an instant, so the
+window lands on the same grid the bars do: it ends when that local day ends,
+which every bucket size divides. On 3M the last bar is that whole day, on 1M
+its afternoon, on 24H its last quarter hour — and every window starts on a
+local midnight. There is deliberately no second date field: the duration
+belongs to the range buttons, and a dragged span would make the bucket size
+depend on how wide you happened to drag. The days the window covers are
+banded in the grid so that relationship is visible while you pick.
 
 Whenever the window isn't the live one, the resolved range is shown beside the
 buttons with a **Jump to now** link, so it is always obvious when you're
 looking at history.
 
 Stepping is instant: raw rows are cached, so a new anchor is a re-fold rather
-than a re-fetch. Only stepping past what's cached triggers a fetch, and then
-only for the missing older slice.
+than a re-fetch. The first load fetches the 180 days the ranges themselves
+need, then keeps reaching back to the one-year retention limit in the
+background, so stepping rarely needs the network at all. When it does, the
+dashboard you were looking at stays on screen, dimmed, with a progress line
+— it never drops back to the key page. Only a rejected key does that.
 
 ### Filtering and isolating
 
@@ -254,7 +266,8 @@ src/
     *.ts       scales, SVG paths, formatting, hooks
   components/
     charts/    LineChart, BarChart, RankTable (+ DonutChart, Sparkline, unused here)
-    primitives/Card, Legend, Tooltip, TableView, StatTile, MultiSelect, Tabs, KeyGate
+    primitives/Card, Legend, Tooltip, TableView, StatTile, MultiSelect, Tabs,
+               KeyGate, TimeRangeBar, Calendar
   data/        folds the fact table into series and breakdowns
   App.tsx      the dashboard
 scripts/

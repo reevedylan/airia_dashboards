@@ -1,4 +1,4 @@
-import type { RawRow } from './aggregate'
+import { slim, type RawRow } from './aggregate'
 
 /**
  * Fetches AIOperationExecutions through the page's own origin.
@@ -15,6 +15,7 @@ const PAGE_LIMIT = 200_000       // a ceiling, not the real bound
 const MIN_WINDOW_MS = 1000       // bisection floor
 const CHUNK_MS = 24 * 3_600_000
 const CONCURRENCY = 6            // gentler than the CLI's 8; a browser shares the tab
+export const BACKGROUND_CONCURRENCY = 2
 const REQ_TIMEOUT_MS = 120_000
 
 export class WindowTooLarge extends Error {}
@@ -49,7 +50,9 @@ async function requestWindow(key: string, start: number, end: number, signal?: A
     if (items.length < (json.totalCount ?? 0)) {
       throw new WindowTooLarge(`partial: ${items.length} of ${json.totalCount}`)
     }
-    return items
+    // Projected here, where rows enter, so nothing downstream ever holds a
+    // field it does not read. Counts are untouched: every row survives.
+    return items.map(slim)
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       if (signal?.aborted) throw err
@@ -95,12 +98,23 @@ export async function probe(key: string, from: number, to: number): Promise<numb
   return (await res.json()).totalCount ?? 0
 }
 
+export interface FetchOptions {
+  onProgress?: (p: Progress) => void
+  signal?: AbortSignal
+  /**
+   * Parallel day-windows in flight. The default is what a foreground load
+   * uses; background backfill runs lower, because the API starts returning
+   * 403s under sustained parallel load and a slow backfill nobody is waiting
+   * for is better than a throttled one someone is.
+   */
+  concurrency?: number
+}
+
 export async function fetchAll(
   key: string,
   from: number,
   to: number,
-  onProgress?: (p: Progress) => void,
-  signal?: AbortSignal,
+  { onProgress, signal, concurrency = CONCURRENCY }: FetchOptions = {},
 ): Promise<{ rows: RawRow[]; splits: number }> {
   const windows: Array<[number, number]> = []
   for (let s = from; s < to; s += CHUNK_MS) windows.push([s, Math.min(s + CHUNK_MS, to)])
@@ -133,7 +147,7 @@ export async function fetchAll(
   const out: RawRow[][] = []
   let next = 0
   await Promise.all(
-    Array.from({ length: Math.min(CONCURRENCY, windows.length) }, async () => {
+    Array.from({ length: Math.max(1, Math.min(concurrency, windows.length)) }, async () => {
       while (next < windows.length) {
         const i = next++
         out[i] = await fetchWindow(windows[i][0], windows[i][1])

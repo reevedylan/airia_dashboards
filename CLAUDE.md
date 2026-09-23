@@ -151,13 +151,103 @@ The window's DURATION (the range buttons) and its END (the anchor) are
 independent. `App.tsx` holds `anchor: number | null`, where null is the live
 window; `useAiriaLive(key, anchor)` folds at that anchor.
 
+**An anchor is the last instant the window INCLUDES**, not the first it
+excludes. The fold walks back from the bucket *containing* the anchor, so
+anchoring on the following midnight instead drew a final empty bar for the
+next day.
+
 **Raw rows are cached in a ref**, so changing the anchor is a re-fold (~0.3s),
 not a re-fetch (~9s). Only an anchor reaching past the cached span fetches,
 and then only the missing older slice, which is prepended. Don't "simplify"
 this into a refetch per step.
 
 Stepping uses the nominal `count x bucketMs`; the boundary walk re-aligns
-afterwards, so a DST day cannot drift the window.
+afterwards, so a DST day cannot drift the window. `stepAnchor()` additionally
+re-snaps a day-aligned anchor to the local-day grid, because every range's
+duration is a whole number of days and plain arithmetic moves it an hour
+across a DST change — visible on 7D, where the last bar is two hours wide.
+
+### The calendar picks a DAY, and only the end
+
+`Calendar.tsx` is a month view; `TimeRangeBar` hangs it off the anchor
+control. Three rules:
+
+- **It speaks civil days (`YYYY-MM-DD`), never instants.** All its arithmetic
+  is UTC-based, which is exact, because a civil calendar is the same
+  everywhere: September has 30 days in Sydney and in Reykjavik. Turning a day
+  into an instant is `endOfDay()` in `data/airia.ts`, the only place that
+  knows the zone the buckets were aligned to.
+- **Picking a day snaps the window to the bucket grid.** The window ends at
+  that local midnight, which every bucket size divides, so both ends land on
+  the grid the bars do: 3M ends with a whole day, 1M with its PM half, 24H
+  with its last quarter hour — and all of them *start* on a local midnight.
+  Verified across all five ranges.
+- **No independent start date.** Duration stays with the range buttons. The
+  days from the resolved start to the selection are banded in the grid so
+  that is visible; picking today returns to the live window rather than
+  freezing at tonight's midnight.
+
+`localMidnight()` anchors on local NOON and lets `floor()` walk back, because
+noon is never within an hour of a DST transition and so needs only one offset
+lookup to land inside the right day.
+
+## Never go back to the key gate mid-session
+
+`App.tsx` renders `KeyGate` when there is **no key, or the key was rejected**
+(`load.auth`). Nothing else. It used to read
+`load.status !== 'ready' || !block`, so any non-ready state showed the key
+page — including a mid-session backfill when an anchor stepped past the
+cached span, which reads as being logged out.
+
+`LoadState` is therefore a flat record with `data` on it, not a union
+discriminated by status: the last good fold is **held** through the next
+load. While one runs, the previous render stays up at reduced opacity
+(`Card`'s `loading` prop, plus `.strip[data-loading]`) under an inline
+progress line. A non-auth error keeps the page too and says so in a banner —
+the figures are the last complete ones, and throwing them away helps nobody.
+
+The anchor control leads and the plot catches up: during a load the date
+button shows the requested day while the resolved chip, which describes what
+is *drawn*, dims (`data-stale`).
+
+## Prefetching history
+
+After first paint, `useAiriaLive` reaches back to the **one-year retention
+floor** in 14-day slices, in the background, at a lower concurrency.
+
+Measured, before choosing:
+
+| | rows | heap held |
+|---|---|---|
+| 180 days (what the ranges need) | 156,406 | ~122 MB raw |
+| 365 days (retention) | 320,246 | ~249 MB raw, ~149 MB projected |
+
+So: not a bigger first load — that would have roughly doubled a 9-second
+wait for history most sessions never open — and not raw rows either.
+`slim()` in `aggregate.ts` projects each row to the fourteen fields the
+aggregation reads as it arrives (~780 → ~470 bytes), which is what makes a
+year affordable at all. Every row survives the projection, so the
+kept-of-fetched counts still mean what they say. **Add a field to `RawRow`
+and add it to `KEPT`, or it will be silently dropped.**
+
+Two things keep this from corrupting the figures:
+
+- **One writer at a time.** Foreground fold and background backfill both
+  extend the same array through a promise-chain mutex. Two overlapping
+  fetches would prepend the same rows twice and double everything on the
+  page.
+- **The foreground cuts in.** It aborts the in-flight backfill slice rather
+  than queueing behind it, and an aborted slice is discarded whole, never
+  half-prepended.
+
+The API returns **403s under sustained parallel load** — a 180-window sweep
+at concurrency 6 tripped it for minutes — so the backfill runs at
+`BACKGROUND_CONCURRENCY`, and nobody is waiting on it.
+
+`rowsFrom()` binary-searches the cache before folding, so a fold stays
+proportional to the window shown rather than to the year cached behind it.
+It relies on the cache being ascending by time, which holds by construction:
+each fetch returns its windows in order and older slices are prepended whole.
 
 ## Period comparison
 

@@ -87,6 +87,14 @@
   --viz-radius-chip:  6px;
   --viz-radius-mark:  4px;   /* rounded data-end on bars                    */
 
+  /* Height of a toolbar control — the segmented range buttons, the anchor,
+     the filter and the theme button all read it, so the row lines up on one
+     baseline instead of each control sizing itself from its own padding.
+     `--viz-ctl-inner-h` is the height inside a 3px-padded shell, so a button
+     in a segmented group matches a standalone one. */
+  --viz-ctl-h:        37px;
+  --viz-ctl-inner-h:  29px;
+
   /* Height of a card's series-key row. Reserved whether or not a legend is
      present, so switching a chart to a single-series view cannot shift the
      plot underneath it. Must clear the tallest legend item. */

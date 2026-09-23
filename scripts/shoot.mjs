@@ -9,6 +9,11 @@
  *   node scripts/shoot.mjs --out /tmp/c.png --click 1490,93 --hover 600,330
  *
  * Needs Chrome already running with --remote-debugging-port=9222.
+ *
+ * The page asks for an API key, so set AIRIA_API_KEY in the ENVIRONMENT and
+ * it is seeded into sessionStorage before the first script runs. Deliberately
+ * not a flag: an argument is visible in `ps` and lands in shell history,
+ * which is the one thing the key must never do.
  */
 
 import { writeFileSync } from 'node:fs'
@@ -29,6 +34,10 @@ const height = Number(arg('height', 1000))
 /* Keep this at 1 when using --hover: with a scale factor applied, CDP input
    coordinates no longer line up with CSS pixels. */
 const dsf = Number(arg('dsf', 1))
+/** Extra settle time after the page reports it is ready. */
+const settle = Number(arg('settle', 400))
+/** How long to wait for the dashboard to finish its first fetch. */
+const readyMs = Number(arg('ready-timeout', 90_000))
 
 const targets = await (await fetch('http://localhost:9222/json/list')).json()
 let page = targets.find((t) => t.type === 'page')
@@ -62,8 +71,36 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dsf, mobile: false })
 await send('Runtime.enable')
 await send('Page.enable')
+
+if (process.env.AIRIA_API_KEY) {
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `try { sessionStorage.setItem('airia-api-key', ${JSON.stringify(process.env.AIRIA_API_KEY)}) } catch {}`,
+  })
+}
+
 await send('Page.navigate', { url })
-await wait(1400)
+
+// Wait for the dashboard rather than a fixed delay: the first load fetches
+// six months of executions, and a screenshot of the spinner proves nothing.
+const deadline = Date.now() + readyMs
+let ready = false
+while (Date.now() < deadline) {
+  const probe = await send('Runtime.evaluate', {
+    expression: `(() => {
+      const gate = document.querySelector('.gate')
+      // A gate that is busy is the FIRST load, not a prompt for a key.
+      if (gate) return gate.hasAttribute('data-busy') ? 'first-load' : 'gate'
+      if (document.querySelector('.strip')) return document.querySelector('.page__busy') ? 'busy' : 'ready'
+      return 'blank'
+    })()`,
+    returnByValue: true,
+  })
+  const at = probe.result?.value
+  if (at === 'ready' || at === 'gate') { ready = at === 'ready'; console.log(`  page: ${at}`); break }
+  await wait(400)
+}
+if (!ready) console.log('  page: still loading at the deadline')
+await wait(settle)
 
 // Several clicks: "x,y;x,y" — e.g. flip the theme, then change the range.
 for (const step of (click ? click.split(';') : [])) {

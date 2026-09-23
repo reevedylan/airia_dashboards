@@ -20,7 +20,7 @@ export function KeyGate({ onSubmit, busy, error }: KeyGateProps) {
   const [remember, setRemember] = useState(false)
 
   return (
-    <div className="gate">
+    <div className="gate" data-busy={busy ? '' : undefined}>
       <form
         className="gate__card"
         onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim(), remember) }}

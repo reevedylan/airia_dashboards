@@ -8,8 +8,8 @@ import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
-  previousTotals, delta,
-  type Dimension, type BreakdownRow,
+  previousTotals, delta, dayOf, endOfDay, stepAnchor,
+  type Dimension, type BreakdownRow, type History,
 } from './data/airia'
 import { useApiKey, maskKey } from './lib/apiKey'
 import { PaletteSheet } from './demo/PaletteSheet'
@@ -55,7 +55,11 @@ export default function App() {
 
   const { key, setKey, clear, remember } = useApiKey()
   const load = useAiriaLive(key, anchor)
-  const data = load.status === 'ready' ? load.data : null
+  /* The last good fold, HELD while the next one loads. Reading it only when
+     the status is 'ready' is what used to drop the page back to the key gate
+     mid-session, the moment an anchor reached past the cached rows. */
+  const data = load.data
+  const busy = load.status === 'loading'
   const allUsers = useAllUsers(data)
   const block = data ? data.ranges[range] : null
 
@@ -108,21 +112,32 @@ export default function App() {
      DST day cannot drift the window. */
   const rangeMs = RANGE_MS[range]
   const atNow = anchor == null
+  /* The last instant the window includes, and the day it falls on. While
+     loading, these describe the window being fetched rather than the one
+     still on screen — the controls lead, the plot catches up. */
+  const endsAt = anchor ?? Date.now()
   const anchorControls = {
     atNow,
     onStep: (dir: -1 | 1) => setAnchor((prev) => {
-      const next = (prev ?? Date.now()) + dir * rangeMs
+      const next = stepAnchor(prev ?? Date.now(), dir * rangeMs)
       return next >= Date.now() ? null : next
     }),
-    // A date means "this duration, ending at the end of that day".
-    onPickDate: (iso: string) => {
-      const end = new Date(`${iso}T00:00:00`).getTime() + 86_400_000
+    /* A day, not an instant: the window ends when that local day does, which
+       is a boundary every bucket size divides. Picking today means the live
+       window, so the dashboard goes back to following the clock rather than
+       freezing at tonight's midnight. */
+    onPickDay: (day: string) => {
+      const end = endOfDay(day)
       setAnchor(end >= Date.now() ? null : end)
     },
     onNow: () => setAnchor(null),
     resolved: block ? `${fmtX?.tick(block.x[0]) ?? ''} – ${fmtX?.tick(block.x[block.x.length - 1]) ?? ''}` : undefined,
-    dateValue: toISODate(anchor == null ? Date.now() : anchor - 1),
-    maxDate: toISODate(Date.now()),
+    stale: busy,
+    day: dayOf(endsAt),
+    fromDay: block ? dayOf(block.x[0]) : undefined,
+    maxDay: dayOf(Date.now()),
+    minDay: load.history ? dayOf(load.history.target) : undefined,
+    note: `The ${range} window, ending when that day does${block ? ` · ${block.zone}` : ''}.`,
   }
 
   const toolbar = (
@@ -164,19 +179,26 @@ export default function App() {
     />
   )
 
-  if (!key || load.status !== 'ready' || !block || !scoped || !shown || !fmtX) {
-    const busy = load.status === 'loading'
+  /*
+   * The gate answers exactly two questions: is there a key, and was it
+   * rejected. Everything else — a backfill, a re-fold, a dropped connection
+   * — is handled by holding the previous render, because throwing someone
+   * back to a password prompt mid-session reads as being logged out.
+   */
+  const rejected = load.status === 'error' && load.auth
+  if (!key || rejected || !block || !scoped || !shown || !fmtX) {
+    const progress = busy
       ? (load.progress && load.progress.total > 0
           ? `${load.message} ${load.progress.done}/${load.progress.total} · ${full(load.progress.rows)} rows`
-          : load.message)
+          : load.message ?? null)
       : null
     return (
       <div className="page">
         <Head />
         <KeyGate
           onSubmit={(k, persist) => setKey(k, persist)}
-          busy={busy}
-          error={load.status === 'error' ? load.message : null}
+          busy={progress}
+          error={load.status === 'error' ? load.message ?? null : null}
         />
       </div>
     )
@@ -243,6 +265,28 @@ export default function App() {
       <Head />
       {toolbar}
 
+      {/* A refetch holds the page rather than replacing it, so the only
+          thing that changes is this line and the opacity of the plots. */}
+      {busy ? (
+        <p className="page__busy" role="status">
+          <ProgressBar value={load.progress ? load.progress.done / Math.max(1, load.progress.total) : null} />
+          <span>
+            {load.message}
+            {load.progress && load.progress.total > 0
+              ? ` · ${load.progress.done}/${load.progress.total} days · ${full(load.progress.rows)} rows`
+              : ''}
+          </span>
+        </p>
+      ) : null}
+
+      {/* Not an auth failure — the key is fine, the request was not. The
+          figures below are the last complete ones, so they stay. */}
+      {load.status === 'error' ? (
+        <p className="page__error" role="alert">
+          {load.message} · showing the last complete window.
+        </p>
+      ) : null}
+
       {userFilter.size > 0 ? (
         <p className="page__scope">
           Scoped to {userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`} ·
@@ -251,7 +295,7 @@ export default function App() {
         </p>
       ) : null}
 
-      <div className="strip">
+      <div className="strip" data-loading={busy ? '' : undefined}>
         <StatTile label="Token spend" value={currency(scoped.totals.cost)} delta={vsPrevious(scoped.totals.cost, prev.spend)} />
         <StatTile label="Tokens" value={compact(scoped.totals.tokens)} delta={vsPrevious(scoped.totals.tokens, prev.tokens)} />
         <StatTile label="Executions" value={full(scoped.totals.executions)} delta={vsPrevious(scoped.totals.executions, prev.executions)} />
@@ -260,6 +304,7 @@ export default function App() {
       <div className="grid">
         <Card
           className="grid__wide"
+          loading={busy}
           title="Tokens"
           value={compact(shown.totals.tokens)}
           controls={<ViewToggle value={tokenView} onChange={setTokenView} />}
@@ -342,6 +387,7 @@ export default function App() {
 
         <Card
           className="grid__wide"
+          loading={busy}
           title="Token spend"
           value={currency(shown.totals.cost)}
           controls={<ViewToggle value={spendView} onChange={setSpendView} />}
@@ -432,6 +478,7 @@ export default function App() {
             isolate/ghost behaviour — only the grouping differs. */}
         <Card
           className="grid__full"
+          loading={busy}
           title="Breakdown"
           hideTitle
           controls={
@@ -526,6 +573,7 @@ export default function App() {
           ? `, ${full(data!.meta.legacyTotals)} of them against the pre-June-2026 total convention`
           : ''} ·
         {' '}generated {new Date(data!.meta.generatedAt).toLocaleString('en-GB')}
+        {load.history ? <> · <HistoryNote history={load.history} /></> : null}
       </p>
 
       <PaletteSheet />
@@ -540,12 +588,6 @@ const RANGE_MS: Record<RangeKey, number> = {
   '14D': 84 * 4 * 3_600_000,
   '1M': 60 * 12 * 3_600_000,
   '3M': 90 * 24 * 3_600_000,
-}
-
-/** Local YYYY-MM-DD, for the native date input. */
-function toISODate(t: number): string {
-  const d = new Date(t)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 /** "15 min", "2 hr", "1 day" — however the range's buckets are sized. */
@@ -565,6 +607,28 @@ function ViewToggle({ value, onChange }: { value: ChartView; onChange: (v: Chart
         </button>
       ))}
     </div>
+  )
+}
+
+/**
+ * How far back stepping is instant. Worth saying: the window can reach
+ * further than the cache, it just costs a fetch to get there.
+ */
+function HistoryNote({ history }: { history: History }) {
+  return (
+    <>
+      {full(history.rows)} rows held, back to {dayOf(history.from)}
+      {history.running ? ' and still reaching back' : ''}
+    </>
+  )
+}
+
+/** Determinate when the fetch knows its window count, a pulse when it does not. */
+function ProgressBar({ value }: { value: number | null }) {
+  return (
+    <span className="page__progress" data-indeterminate={value == null ? '' : undefined} aria-hidden="true">
+      <span style={value == null ? undefined : { width: `${Math.round(value * 100)}%` }} />
+    </span>
   )
 }
 

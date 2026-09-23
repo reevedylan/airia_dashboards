@@ -17,19 +17,25 @@
 }
 .viz-toolbar__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
 
+/* Every control on the toolbar row is --viz-ctl-h tall. Sizing each from its
+   own padding is what left the anchor 15px shorter than the range buttons
+   beside it. A shell that pads 3px around its buttons gets the inner height,
+   so both kinds of control end up on the same outline. */
 .viz-segmented {
   display: inline-flex; align-items: stretch;
+  height: var(--viz-ctl-h);
   background: var(--viz-surface);
   border: 1px solid var(--viz-border);
   border-radius: var(--viz-radius-ctl);
   padding: 3px; gap: 2px;
 }
 .viz-segmented__btn {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: var(--viz-ctl-inner-h);
   font: 500 13px/1 var(--viz-font);
   color: var(--viz-text-secondary);
   background: none; border: 0; cursor: pointer;
-  padding: 8px 13px; border-radius: 6px;
+  padding: 0 13px; border-radius: 6px;
   transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
 }
 .viz-segmented__btn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
@@ -39,18 +45,20 @@
 
 .viz-btn {
   display: inline-flex; align-items: center; gap: 8px;
+  height: var(--viz-ctl-h);
   font: 500 13px/1 var(--viz-font);
   color: var(--viz-text-secondary);
   background: var(--viz-surface);
   border: 1px solid var(--viz-border);
   border-radius: var(--viz-radius-ctl);
-  padding: 10px 14px; cursor: pointer;
+  padding: 0 14px; cursor: pointer;
   transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
 }
 .viz-btn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
 
-/* Sized to sit inside a card's headline row without changing its height. */
-.viz-btn--sm { padding: 4px 9px; font-size: 11.5px; border-radius: 6px; gap: 6px; }
+/* Sized to sit inside a card's headline row without changing its height —
+   the toolbar height does not apply here. */
+.viz-btn--sm { height: auto; padding: 4px 9px; font-size: 11.5px; border-radius: 6px; gap: 6px; }
 
 .viz-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -62,7 +70,8 @@
 .viz-iconbtn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
 .viz-iconbtn[aria-pressed='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
 
-:where(.viz-btn, .viz-iconbtn, .viz-segmented__btn, .viz-showall, .viz-legend__item):focus-visible,
+:where(.viz-btn, .viz-iconbtn, .viz-segmented__btn, .viz-showall, .viz-legend__item,
+        .viz-anchor__step, .viz-anchor__date, .viz-cal__nav):focus-visible,
 .viz-plot svg:focus-visible,
 .viz-tableview:focus-visible {
   outline: 2px solid var(--viz-focus); outline-offset: 2px;
@@ -487,15 +496,21 @@
 
 /* --- window anchor (position, not duration) ------------------------------ */
 
+/* Same shell as .viz-segmented — same height, padding, radius and border —
+   so the two controls read as one row. They are siblings in meaning too:
+   one picks how long the window is, the other where it ends. */
 .viz-anchor {
+  position: relative;
   display: inline-flex; align-items: stretch; gap: 2px; padding: 3px;
+  height: var(--viz-ctl-h);
   background: var(--viz-surface);
   border: 1px solid var(--viz-border);
   border-radius: var(--viz-radius-ctl);
 }
 .viz-anchor__step {
   display: inline-grid; place-items: center;
-  width: 30px; border: 0; border-radius: 6px; cursor: pointer;
+  width: 30px; height: var(--viz-ctl-inner-h);
+  border: 0; border-radius: 6px; cursor: pointer;
   color: var(--viz-text-secondary); background: none;
   transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
 }
@@ -503,29 +518,114 @@
 .viz-anchor__step:disabled { opacity: 0.3; cursor: default; }
 
 .viz-anchor__date {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 9px; border-radius: 6px; cursor: pointer;
-  color: var(--viz-text-secondary);
+  display: inline-flex; align-items: center; gap: 7px;
+  height: var(--viz-ctl-inner-h);
+  padding: 0 11px; border: 0; border-radius: 6px; cursor: pointer;
+  background: none; color: var(--viz-text-secondary);
+  font: 500 13px/1 var(--viz-font);
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
 }
 .viz-anchor__date:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
-/* The native picker is kept for its calendar and keyboard support; only the
-   icon is shown until it is focused, so the control stays compact. */
-.viz-anchor__date input {
-  width: 0; padding: 0; border: 0; background: none; color: inherit;
-  font: 500 12px/1 var(--viz-font); opacity: 0;
+.viz-anchor__date[aria-expanded='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
+/* Tabular figures and a floor width, so the toolbar does not twitch sideways
+   as the date changes under the chevrons. */
+.viz-anchor__daylabel {
+  font-variant-numeric: tabular-nums;
+  min-width: 10ch; text-align: left; white-space: nowrap;
 }
-.viz-anchor__date input:focus { width: 108px; opacity: 1; outline: none; }
-.viz-anchor__date input::-webkit-calendar-picker-indicator { cursor: pointer; }
+
+.viz-anchor__pop {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
+}
 
 /* Only shown off-live, so it doubles as the signal that you are in history. */
 .viz-anchor__resolved {
   display: inline-flex; align-items: center; gap: 10px;
-  padding: 9px 12px; border-radius: var(--viz-radius-ctl);
+  height: var(--viz-ctl-h);
+  padding: 0 12px; border-radius: var(--viz-radius-ctl);
   background: var(--viz-seq-100);
   font: 500 12px/1 var(--viz-font); color: var(--viz-seq-700);
   font-variant-numeric: tabular-nums;
 }
+.viz-anchor__resolved[data-stale] { opacity: 0.45; transition: opacity var(--viz-dur-base) var(--viz-ease); }
 .viz-anchor__resolved button {
   font: 600 12px/1 var(--viz-font); color: var(--viz-seq-700);
   background: none; border: 0; cursor: pointer; text-decoration: underline; padding: 2px;
 }
+
+/* --- calendar ------------------------------------------------------------ */
+
+.viz-cal {
+  width: 266px;
+  display: flex; flex-direction: column;
+  background: var(--viz-surface-raised);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
+  padding: 10px;
+}
+.viz-cal__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; padding: 2px 2px 8px;
+}
+.viz-cal__month {
+  font: 600 13px/1 var(--viz-font); color: var(--viz-text-primary);
+}
+.viz-cal__nav {
+  display: inline-grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 6px;
+  color: var(--viz-text-secondary); background: none; border: 0; cursor: pointer;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-cal__nav:hover:not(:disabled) { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+.viz-cal__nav:disabled { opacity: 0.3; cursor: default; }
+
+.viz-cal__dow, .viz-cal__grid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+}
+.viz-cal__dow span {
+  display: grid; place-items: center; height: 22px;
+  font: 500 10.5px/1 var(--viz-font); color: var(--viz-text-muted);
+}
+.viz-cal__day {
+  display: grid; place-items: center; height: 30px;
+  font: 500 12px/1 var(--viz-font);
+  font-variant-numeric: tabular-nums;
+  color: var(--viz-text-primary);
+  background: none; border: 0; border-radius: 6px; cursor: pointer;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-cal__day:hover:not(:disabled) { background: var(--viz-surface-hover); }
+.viz-cal__day:disabled { opacity: 0.25; cursor: default; }
+.viz-cal__day[data-outside] { color: var(--viz-text-muted); }
+/* The band is the window the range buttons chose. Showing it makes plain
+   that a click moves a fixed duration rather than dragging an edge. */
+.viz-cal__day[data-window] { background: var(--viz-seq-100); color: var(--viz-text-primary); border-radius: 0; }
+.viz-cal__day[data-window]:hover:not(:disabled) { background: var(--viz-seq-200); }
+.viz-cal__day[data-today] { box-shadow: inset 0 0 0 1px var(--viz-axis); }
+/* The deepest step of the ramp, inked with --viz-page: that pair inverts
+   correctly in both modes — pale ink on a dark fill in light mode, dark ink
+   on a pale fill in dark mode — where --viz-text-primary would not. */
+.viz-cal__day[data-selected] {
+  background: var(--viz-seq-700); color: var(--viz-page);
+  font-weight: 700; border-radius: 6px;
+}
+.viz-cal__day[data-selected]:hover:not(:disabled) { background: var(--viz-seq-600); }
+.viz-cal__day:focus-visible { outline: 2px solid var(--viz-focus); outline-offset: -2px; }
+
+.viz-cal__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--viz-border);
+}
+.viz-cal__note {
+  margin: 0; flex: 1;
+  font: 400 11px/1.4 var(--viz-font); color: var(--viz-text-muted);
+}
+.viz-cal__todaybtn {
+  flex-shrink: 0;
+  font: 600 11.5px/1 var(--viz-font); color: var(--viz-seq-700);
+  background: none; border: 0; cursor: pointer; padding: 5px 6px; border-radius: 6px;
+}
+.viz-cal__todaybtn:hover:not(:disabled) { background: var(--viz-surface-hover); }
+.viz-cal__todaybtn:disabled { color: var(--viz-text-muted); cursor: default; }
