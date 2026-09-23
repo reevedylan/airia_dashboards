@@ -836,22 +836,59 @@ the diff for `akey_`/`ak-` prefixes and `@` addresses.
 ## Verifying a change
 
 ```
-npx tsc -b && npm run build
-node scripts/validate-palette.mjs
-npm run dev            # paste a key in the UI
+npm run build                  # tsc -b && vite build
+npm run dev                    # paste a key in the UI
+
+npm run chrome &               # headless Chrome on :9222
+export AIRIA_API_KEY=...       # the checks seed it into sessionStorage
+npm run check                  # types, colour, layout, console
 ```
 
-Then **look at it** — the validator checks colour, not layout:
+Four gates, and each exists because something got past the other three:
+
+| | what it measures |
+|---|---|
+| `check:palette` | lightness band, chroma floor, colourblind and normal-vision separation, contrast — both modes |
+| `check:layout` | toolbar baseline, card box across a view toggle, toolbar stability when the window moves, popover inside the viewport at 640px |
+| `check:console` | drives every control once and fails on any console error or React warning |
+| `tsc -b` | what it always did, which on this codebase is less than you would hope — see below |
+
+**The types will not save you here.** Three of the worst bugs in this
+project's history all compiled cleanly: `PreviousWindow` indexed per user
+while the data was per (user, gateway); `slim()` dropping a field that was
+not in `KEPT`; `Z.floor` returning a boundary that was not in the grid. The
+checks above exist because the compiler had nothing to say about any of
+them.
+
+### Looking at it
 
 ```
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless --remote-debugging-port=9222 --user-data-dir=/tmp/viz-chrome about:blank &
-
 node scripts/shoot.mjs --out /tmp/a.png
-node scripts/shoot.mjs --out /tmp/b.png --hover 600,330        # says if the tooltip opened
-node scripts/shoot.mjs --out /tmp/c.png --click-sel '.viz-anchor__date'
+node scripts/shoot.mjs --out /tmp/b.png --hover 600,430        # says if the tooltip opened
+node scripts/shoot.mjs --out /tmp/c.png --width 640 --theme dark --click-sel '.viz-anchor__date'
+node scripts/probe.mjs "document.querySelector('.viz-extent').textContent"
 ```
 
-Check every range preset, both themes, and 640px width. `--hover` reports
-whether the hover layer actually opened, so a missed coordinate can't be
-mistaken for a working chart.
+`probe.mjs` runs any expression in the live page, and because Vite serves
+the sources, a dynamic `import()` reaches the real modules — which is how
+the aggregation gets tested against real rows with no test runner:
+
+```
+node scripts/probe.mjs "(async () => {
+  const m = await import('/src/lib/airia/aggregate.ts')
+  const Z = m.makeZone('Australia/Sydney')
+  return m.windowFor(Z, m.RANGE_SPECS['3M'], Date.now()).bounds.length
+})()"
+```
+
+`measure-load.mjs` reports first paint, backfill time, request counts and
+what a step back costs. **Re-run it before touching chunk size,
+concurrency or how far the backfill reaches** — every one of those numbers
+in these notes came from it, and opinions about fetch strategy age badly.
+
+The key always comes from `AIRIA_API_KEY` in the environment, never a flag:
+an argument is visible in `ps` and lands in shell history.
+
+Check every range preset, both themes, both chart views and 640px. A
+`--hover` reports whether the layer actually opened, so a missed coordinate
+cannot be mistaken for a working chart.

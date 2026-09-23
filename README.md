@@ -78,16 +78,25 @@ filter be a real scope rather than a highlight.
 ## Development
 
 ```bash
-npx tsc -b && npm run build
-node scripts/validate-palette.mjs   # colour gate: contrast, colourblind separation
-node scripts/shoot.mjs --out /tmp/a.png --hover 600,330
+npm run chrome &            # headless Chrome, for the browser checks
+export AIRIA_API_KEY=...
+npm run check               # types, colour, layout, console
 ```
 
-No unit suite — correctness is checked against a live tenant, plus the colour
-gate. `shoot.mjs` drives headless Chrome for layout checks and reads
-`AIRIA_API_KEY` from the environment. Buckets align to `Australia/Sydney`
-(`ZONE` in `src/data/airia.ts`) and history is capped at Airia's 365-day log
-retention; nothing else needs configuring.
+There's no unit suite. Four gates stand in for one, because the bugs worth
+catching here were never type errors: `check:palette` measures contrast and
+colourblind separation, `check:layout` measures the layout invariants,
+`check:console` drives every control and fails on any React warning, and
+`scripts/probe.mjs` runs expressions against the real modules in the live
+page — which is how the aggregation is tested against real rows.
+
+`scripts/shoot.mjs` takes screenshots, including hover states, and
+`scripts/measure-load.mjs` reports load timings and request counts. All of
+them read the key from `AIRIA_API_KEY`, never an argument.
+
+Buckets align to `Australia/Sydney` (`ZONE` in `src/data/airia.ts`) and
+history is capped at Airia's 365-day log retention; nothing else needs
+configuring.
 
 **`CLAUDE.md` is the real documentation** — the data contract, the reducer
 table, the time-zone and daylight-saving rules, and the mistakes worth not
