@@ -8,10 +8,15 @@ dashboard built on them. No charting library — everything is hand-rolled SVG.
 ```
 src/theme/      colour — the ONLY place hex values exist
 src/lib/        maths & hooks — no JSX, no colour
+  airia/        fetch + aggregation, pure
 src/components/ the reusable kit
-src/data/       Airia loading + range slicing
+src/data/       window.ts  which instants we are looking at, and the zone
+                live.ts    fetching, the row cache, the backfill
+                fold.ts    fact table to series and breakdowns
+                airia.ts   barrel, so App imports one path
+src/ChartCard.tsx  the dashboard's measure card, composed from the kit
 src/App.tsx     the dashboard
-scripts/        ingest, palette validator, screenshot driver
+scripts/        the four gates, plus probe / shoot / measure-load
 ```
 
 `src/lib/` must never import from `src/components/`. Components must never
