@@ -177,6 +177,14 @@ For the same reason both views of a chart render a one-line footer note. If
 only one view had one, the card would grow on toggle and shove everything
 below it down the page.
 
+`ChartCard` in `src/ChartCard.tsx` is where both of the dashboard's measure
+cards come from, and it derives the legend, both charts and both table twins
+from ONE list of categories. They used to be two copies restating that list
+four times each, which is how a click that isolated a model in the daily
+view left the cumulative view showing all of them — fixed in one copy,
+missed in the other. It is not part of the kit: it knows about isolation and
+about this dashboard's two views.
+
 Verified by measuring the toggle's and plot's bounding boxes in both views at
 1600px and 640px; all four must be identical.
 

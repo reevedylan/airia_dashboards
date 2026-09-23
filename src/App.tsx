@@ -1,13 +1,13 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
-  Card, AxisExtent, LineChart, BarChart, RankTable, StatTile,
-  TimeRangeBar, ToolbarButton, MultiSelect, Tabs, KeyGate,
-  type RangeKey,
+  Card, RankTable, StatTile, TimeRangeBar, ToolbarButton,
+  MultiSelect, Tabs, KeyGate, type RangeKey,
 } from './components'
+import { ChartCard, type ChartView } from './ChartCard'
 import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
-  useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
+  useAiriaLive, useAllUsers, seriesFor, breakdown,
   previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
   stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
   type Dimension, type BreakdownRow, type History, type DayRange, type Scope,
@@ -25,8 +25,6 @@ import { useTheme } from './lib/theme'
  * the default palette seats yellow next to orange, which is the one adjacent
  * pair that fails the colourblind gate, so these orders skip slot 4.
  */
-type ChartView = 'daily' | 'cumulative'
-
 const C = {
   cached: series(1),   // blue   — dominates both charts, sits at the base
   input: series(3),    // aqua
@@ -275,22 +273,6 @@ export default function App() {
   const cost = shown.cost
   const from = extentLabel(x[0])
   const to = extentLabel(x[x.length - 1])
-  const rowStamp = (i: number) => labelAt(x[i])
-
-  const tokenCumulative = runningTotal(shown.tokenTotals)
-  const spendCumulative = runningTotal(scoped === shown ? shown.paid : shown.paid)
-
-  /* The ghost is the current scope's whole — shown only while isolated. */
-  const ghostOf = (values: number[], cumulative: boolean) =>
-    active
-      ? {
-          label: `all ${DIM_LABEL[active.dim]}`,
-          values: cumulative ? runningTotal(values) : values,
-          // A running total must not be re-summed when buckets merge.
-          reducer: (cumulative ? 'max' : 'sum') as 'max' | 'sum',
-        }
-      : undefined
-
   /* The KPI tiles compare against the window immediately before this one, of
      equal length, scoped by the same user filter. Deliberately independent of
      isolate, which is a view on the charts only. */
@@ -392,177 +374,64 @@ export default function App() {
       )}
 
       <div className="grid">
-        <Card
+        {/* Both cards are the same component. What differs is the measure:
+            its categories, its formatters and the note under the plot. */}
+        <ChartCard
           className="grid__wide"
           loading={busy}
           title="Tokens"
           value={compact(shown.totals.tokens)}
-          controls={<ViewToggle value={tokenView} onChange={setTokenView} />}
-          legend={tokenView === 'daily'
-            ? [
-                { label: 'cached input', color: C.cached, shape: 'rect' },
-                { label: 'input', color: C.input, shape: 'rect' },
-                { label: 'output', color: C.output, shape: 'rect' },
-              ]
-            : []}
+          view={tokenView}
+          onView={setTokenView}
+          x={x}
+          series={[
+            { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
+            { key: 'input', label: 'input', color: C.input, values: tokens.input },
+            { key: 'output', label: 'output', color: C.output, values: tokens.output },
+          ]}
+          totals={shown.tokenTotals}
+          ghostTotals={active ? scoped.tokenTotals : null}
+          ghostLabel={active ? `all ${DIM_LABEL[active.dim]}` : undefined}
+          formatValue={(n) => full(Math.round(n))}
+          formatTick={compact}
+          formatX={labelAt}
+          tableRows={rows}
+          note={isolationNote ?? (tokenView === 'daily' ? bucketNote : cumNote)}
+          from={from}
+          to={to}
           activeSeries={hovered}
           onSeriesHover={setHovered}
-          footer={
-            <>
-              <AxisExtent from={from} to={to} />
-              <p className="card-note" data-isolated={isolationNote ? '' : undefined}>
-                {isolationNote ?? (tokenView === 'daily' ? bucketNote : cumNote)}
-              </p>
-            </>
-          }
-          table={tokenView === 'daily'
-            ? {
-                columns: [
-                  { key: 't', label: 'Time' },
-                  { key: 'c', label: 'Cached input', align: 'right' },
-                  { key: 'i', label: 'Input', align: 'right' },
-                  { key: 'o', label: 'Output', align: 'right' },
-                ],
-                rows: rows((i) => ({
-                  t: rowStamp(i), c: full(tokens.cached[i]), i: full(tokens.input[i]), o: full(tokens.output[i]),
-                })),
-              }
-            : {
-                columns: [
-                  { key: 't', label: 'Time' },
-                  { key: 'c', label: 'Cumulative tokens', align: 'right' },
-                  ...(active ? [{ key: 'a', label: `All ${DIM_LABEL[active.dim]}`, align: 'right' as const }] : []),
-                ],
-                rows: rows((i) => ({
-                  t: rowStamp(i),
-                  c: full(tokenCumulative[i]),
-                  ...(active ? { a: full(runningTotal(scoped.tokenTotals)[i]) } : {}),
-                })),
-              }}
-        >
-          {tokenView === 'daily' ? (
-            <BarChart
-              x={x}
-              reducer="sum"
-              activeSeries={hovered}
-              height={176}
-              formatValue={(n) => full(n)}
-              formatX={labelAt}
-              formatTick={compact}
-              series={[
-                { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
-                { key: 'input', label: 'input', color: C.input, values: tokens.input },
-                { key: 'output', label: 'output', color: C.output, values: tokens.output },
-              ]}
-              ghost={ghostOf(scoped.tokenTotals, false)}
-            />
-          ) : (
-            <LineChart
-              x={x}
-              height={176}
-              activeSeries={hovered}
-              formatValue={(n) => full(Math.round(n))}
-              formatX={labelAt}
-              formatTick={compact}
-              series={[
-                // 'max' not 'sum': a running total must not be re-summed if
-                // buckets are ever merged for display. It is monotonic, so the
-                // largest value in a bucket is its closing value.
-                { key: 'total', label: 'cumulative', color: C.total, values: tokenCumulative, reducer: 'max', area: true },
-              ]}
-              ghost={ghostOf(scoped.tokenTotals, true)}
-            />
-          )}
-        </Card>
+        />
 
-        <Card
+        <ChartCard
           className="grid__wide"
           loading={busy}
           title="Token spend"
           value={currency(shown.totals.cost)}
-          controls={<ViewToggle value={spendView} onChange={setSpendView} />}
-          legend={spendView === 'daily'
-            ? [
-                { label: 'write cache', color: C.write, shape: 'rect' },
-                { label: 'cached input', color: C.cached, shape: 'rect' },
-                { label: 'output', color: C.output, shape: 'rect' },
-                { label: 'input', color: C.input, shape: 'rect' },
-                { label: 'other', color: C.other, shape: 'rect' },
-              ]
-            : []}
+          view={spendView}
+          onView={setSpendView}
+          x={x}
+          series={[
+            { key: 'write', label: 'write cache', color: C.write, values: cost.write },
+            { key: 'cached', label: 'cached input', color: C.cached, values: cost.cached },
+            { key: 'output', label: 'output', color: C.output, values: cost.output },
+            { key: 'input', label: 'input', color: C.input, values: cost.input },
+            { key: 'other', label: 'other', color: C.other, values: cost.other },
+          ]}
+          totals={shown.paid}
+          ghostTotals={active ? scoped.paid : null}
+          ghostLabel={active ? `all ${DIM_LABEL[active.dim]}` : undefined}
+          formatValue={(n) => currency(n, 4)}
+          formatTotal={(n) => currency(n)}
+          formatTick={(n) => `$${compact(n)}`}
+          formatX={labelAt}
+          tableRows={rows}
+          note={isolationNote ?? (spendView === 'daily' ? bucketNote : cumNote)}
+          from={from}
+          to={to}
           activeSeries={hovered}
           onSeriesHover={setHovered}
-          footer={
-            <>
-              <AxisExtent from={from} to={to} />
-              <p className="card-note" data-isolated={isolationNote ? '' : undefined}>
-                {isolationNote ?? (spendView === 'daily' ? bucketNote : cumNote)}
-              </p>
-            </>
-          }
-          table={spendView === 'daily'
-            ? {
-                columns: [
-                  { key: 't', label: 'Time' },
-                  { key: 'w', label: 'Write cache', align: 'right' },
-                  { key: 'c', label: 'Cached', align: 'right' },
-                  { key: 'o', label: 'Output', align: 'right' },
-                  { key: 'i', label: 'Input', align: 'right' },
-                  { key: 'x', label: 'Other', align: 'right' },
-                ],
-                rows: rows((i) => ({
-                  t: rowStamp(i),
-                  w: currency(cost.write[i], 4), c: currency(cost.cached[i], 4),
-                  o: currency(cost.output[i], 4), i: currency(cost.input[i], 4),
-                  x: currency(cost.other[i], 4),
-                })),
-              }
-            : {
-                columns: [
-                  { key: 't', label: 'Time' },
-                  { key: 'c', label: 'Cumulative spend', align: 'right' },
-                  ...(active ? [{ key: 'a', label: `All ${DIM_LABEL[active.dim]}`, align: 'right' as const }] : []),
-                ],
-                rows: rows((i) => ({
-                  t: rowStamp(i),
-                  c: currency(spendCumulative[i]),
-                  ...(active ? { a: currency(runningTotal(scoped.paid)[i]) } : {}),
-                })),
-              }}
-        >
-          {spendView === 'daily' ? (
-            <BarChart
-              x={x}
-              reducer="sum"
-              activeSeries={hovered}
-              height={176}
-              formatValue={(n) => currency(n, 4)}
-              formatX={labelAt}
-              formatTick={(n) => `$${compact(n)}`}
-              series={[
-                { key: 'write', label: 'write cache', color: C.write, values: cost.write },
-                { key: 'cached', label: 'cached input', color: C.cached, values: cost.cached },
-                { key: 'output', label: 'output', color: C.output, values: cost.output },
-                { key: 'input', label: 'input', color: C.input, values: cost.input },
-                { key: 'other', label: 'other', color: C.other, values: cost.other },
-              ]}
-              ghost={ghostOf(scoped.paid, false)}
-            />
-          ) : (
-            <LineChart
-              x={x}
-              height={176}
-              activeSeries={hovered}
-              formatValue={(n) => currency(n)}
-              formatX={labelAt}
-              formatTick={(n) => `$${compact(n)}`}
-              series={[
-                { key: 'total', label: 'cumulative', color: C.total, values: spendCumulative, reducer: 'max', area: true },
-              ]}
-              ghost={ghostOf(scoped.paid, true)}
-            />
-          )}
-        </Card>
+        />
 
         {/* One card, two dimensions. They share a column set and the same
             isolate/ghost behaviour — only the grouping differs. */}
@@ -707,18 +576,6 @@ function bucketLabel(ms: number): string {
   return `${ms / 60_000} min`
 }
 
-/** Daily / Cumulative switch, shown in a chart card's header. */
-function ViewToggle({ value, onChange }: { value: ChartView; onChange: (v: ChartView) => void }) {
-  return (
-    <div className="viz-viewtoggle" role="group" aria-label="Chart view">
-      {(['daily', 'cumulative'] as const).map((v) => (
-        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}>
-          {v === 'daily' ? 'Daily' : 'Cumulative'}
-        </button>
-      ))}
-    </div>
-  )
-}
 
 /**
  * How far back stepping is instant. Worth saying: the window can reach
