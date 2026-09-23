@@ -7,6 +7,7 @@ import {
 } from '../lib/airia/aggregate'
 import { addDays, addMonths, spanDays, type Day } from '../lib/day'
 import { fetchAll, probe, AuthError, BACKGROUND_CONCURRENCY, type Progress } from '../lib/airia/fetchAll'
+import { fetchGatewayNames, type GatewayNames } from '../lib/airia/gateways'
 import type { RawRow } from '../lib/airia/aggregate'
 
 /**
@@ -585,28 +586,52 @@ export interface Series {
 
 const zeros = (n: number) => new Array<number>(n).fill(0)
 
-/** Which facts to include. Any field left out is not constrained. */
+/**
+ * Which facts to include.
+ *
+ * Two kinds of field, and the distinction is the one CLAUDE.md draws
+ * between scoping and isolating. `users` and `gateways` are SCOPES: sets
+ * that narrow everything on the page, and an empty one means "all", never
+ * "none". `model`, `user` and `gateway` are single-value ISOLATES, a view
+ * laid on top of whatever the scopes already chose.
+ */
 export interface FactFilter {
   /** Selected user labels. Undefined or empty means every user. */
   users?: ReadonlySet<string>
+  /** Selected gateway ids. Undefined or empty means every gateway. */
+  gateways?: ReadonlySet<string>
   model?: string | null
   user?: string | null
+  gateway?: string | null
+}
+
+/** The scopes alone — what recomputes the whole page, isolation aside. */
+export interface Scope {
+  users?: ReadonlySet<string>
+  gateways?: ReadonlySet<string>
+}
+
+/** Label indices a scope admits, or null for "everything". */
+function admitted(labels: readonly string[], chosen?: ReadonlySet<string>): Set<number> | null {
+  if (!chosen || chosen.size === 0) return null
+  return new Set(labels.map((l, i) => (chosen.has(l) ? i : -1)).filter((i) => i >= 0))
 }
 
 function predicate(block: RangeBlock, f: FactFilter): (i: number) => boolean {
-  const { users, model, user } = f
-  const scopeAll = !users || users.size === 0
+  const { model, user, gateway } = f
   // Resolve labels to dictionary indices once, rather than per fact.
-  const allowed = scopeAll ? null : new Set(
-    block.users.map((u, i) => (users!.has(u) ? i : -1)).filter((i) => i >= 0),
-  )
+  const okUser = admitted(block.users, f.users)
+  const okGateway = admitted(block.gateways, f.gateways)
   const mi = model == null ? -1 : block.models.indexOf(model)
   const ui = user == null ? -1 : block.users.indexOf(user)
+  const gi = gateway == null ? -1 : block.gateways.indexOf(gateway)
   const facts = block.facts
   return (i) => {
-    if (allowed && !allowed.has(facts.u[i])) return false
+    if (okUser && !okUser.has(facts.u[i])) return false
+    if (okGateway && !okGateway.has(facts.g[i])) return false
     if (model != null && facts.m[i] !== mi) return false
     if (user != null && facts.u[i] !== ui) return false
+    if (gateway != null && facts.g[i] !== gi) return false
     return true
   }
 }
@@ -662,18 +687,25 @@ export interface PeriodTotals {
 }
 
 /**
- * Totals for the window immediately before the selected one, scoped by the
- * same user filter — so a delta reflects that user's change, not the tenant's.
+ * Totals for the window immediately before the selected one, under the same
+ * scopes — so a delta reflects that slice's change, not the tenant's.
+ *
+ * Walks the sparse (user, gateway) pairs rather than indexing per user: a
+ * gateway filter has to narrow the baseline too, and per-user scalars could
+ * not express that. Comparing a filtered window against an unfiltered
+ * baseline is the exact shape of bug this avoids.
  */
-export function previousTotals(block: RangeBlock, users?: ReadonlySet<string>): PeriodTotals {
+export function previousTotals(block: RangeBlock, scope: Scope = {}): PeriodTotals {
   const p = block.previous
-  const all = !users || users.size === 0
+  const okUser = admitted(block.users, scope.users)
+  const okGateway = admitted(block.gateways, scope.gateways)
   let spend = 0, tokens = 0, executions = 0
-  for (let i = 0; i < block.users.length; i++) {
-    if (!all && !users!.has(block.users[i])) continue
-    spend += p.spend[i] ?? 0
-    tokens += p.tokens[i] ?? 0
-    executions += p.executions[i] ?? 0
+  for (let i = 0; i < p.u.length; i++) {
+    if (okUser && !okUser.has(p.u[i])) continue
+    if (okGateway && !okGateway.has(p.g[i])) continue
+    spend += p.spend[i]
+    tokens += p.tokens[i]
+    executions += p.executions[i]
   }
   return { spend, tokens, executions }
 }
@@ -714,7 +746,7 @@ export function delta(now: number, before: number): Delta | null {
 
 /* --------------------------------------------------------- breakdowns -- */
 
-export type Dimension = 'model' | 'user'
+export type Dimension = 'model' | 'user' | 'gateway'
 
 export interface BreakdownRow {
   key: string
@@ -737,12 +769,17 @@ export interface BreakdownRow {
   shareSpend: number | null
 }
 
-/** Totals per model or per user, within the current user scope. */
-export function breakdown(block: RangeBlock, dim: Dimension, users?: ReadonlySet<string>): BreakdownRow[] {
+/** The dictionary and fact column a dimension reads. */
+const axis = (block: RangeBlock, dim: Dimension) =>
+  dim === 'model' ? { labels: block.models, idx: block.facts.m }
+  : dim === 'user' ? { labels: block.users, idx: block.facts.u }
+  : { labels: block.gateways, idx: block.facts.g }
+
+/** Totals per model, user or gateway, within the current scopes. */
+export function breakdown(block: RangeBlock, dim: Dimension, scope: Scope = {}): BreakdownRow[] {
   const f = block.facts
-  const labels = dim === 'model' ? block.models : block.users
-  const idx = dim === 'model' ? f.m : f.u
-  const keep = predicate(block, { users })
+  const { labels, idx } = axis(block, dim)
+  const keep = predicate(block, scope)
 
   const acc = labels.map(() => ({
     spend: 0, tIn: 0, tCa: 0, tOu: 0, cIn: 0, cOu: 0, ex: 0,
@@ -794,12 +831,37 @@ export function runningTotal(values: readonly number[]): number[] {
   return values.map((v) => (acc += v))
 }
 
-/** Every user seen across every range, for the filter's option list. */
+/** Every label seen for a dimension across every range, for a filter's
+ *  option list — so the choices do not change as the window moves. */
+function allLabels(data: AiriaData | null, pick: (b: RangeBlock) => readonly string[]): string[] {
+  if (!data) return []
+  const seen = new Set<string>()
+  for (const block of Object.values(data.ranges)) for (const l of pick(block)) seen.add(l)
+  return [...seen].sort((a, b) => a.localeCompare(b))
+}
+
 export function useAllUsers(data: AiriaData | null): string[] {
-  return useMemo(() => {
-    if (!data) return []
-    const seen = new Set<string>()
-    for (const block of Object.values(data.ranges)) for (const u of block.users) seen.add(u)
-    return [...seen].sort((a, b) => a.localeCompare(b))
-  }, [data])
+  return useMemo(() => allLabels(data, (b) => b.users), [data])
+}
+
+export function useAllGateways(data: AiriaData | null): string[] {
+  return useMemo(() => allLabels(data, (b) => b.gateways), [data])
+}
+
+/**
+ * Gateway names, fetched once per key, in the background.
+ *
+ * Deliberately outside the load state: the dashboard does not wait for it
+ * and does not fail with it. Names arrive late and labels re-render; if
+ * they never arrive, short ids stand in.
+ */
+export function useGatewayNames(key: string | null): GatewayNames {
+  const [names, setNames] = useState<GatewayNames>({})
+  useEffect(() => {
+    if (!key) { setNames({}); return }
+    const ctrl = new AbortController()
+    fetchGatewayNames(key, ctrl.signal).then((n) => { if (!ctrl.signal.aborted) setNames(n) })
+    return () => ctrl.abort()
+  }, [key])
+  return names
 }

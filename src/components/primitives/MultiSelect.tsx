@@ -19,6 +19,9 @@ export interface MultiSelectProps {
   /** Rendered instead of a raw option value (e.g. to mark a synthetic entry). */
   renderOption?: (value: string) => React.ReactNode
   placeholder?: string
+  /** Glyph on the trigger. Two filters side by side need telling apart at a
+   *  glance, before either label is read. */
+  icon?: React.ReactNode
 }
 
 /**
@@ -33,7 +36,7 @@ export interface MultiSelectProps {
  */
 export function MultiSelect({
   label, options, selected, onToggle, onChange,
-  allLabel = 'All', renderOption, placeholder = 'Search…',
+  allLabel = 'All', renderOption, placeholder = 'Search…', icon,
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -79,7 +82,7 @@ export function MultiSelect({
         data-active={selected.size > 0 ? '' : undefined}
         onClick={() => setOpen((v) => !v)}
       >
-        <UserIcon />
+        {icon ?? <UserIcon />}
         <span className="viz-msel__label">{label}</span>
         <span className="viz-msel__summary">{summary}</span>
         <ChevronIcon />

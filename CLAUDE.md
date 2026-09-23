@@ -160,21 +160,40 @@ Verified by measuring the toggle's and plot's bounding boxes in both views at
 
 ## The fact table
 
-Each range ships ONE sparse fact table keyed by (bucket, user, model), and
-`src/data/airia.ts` folds everything out of it: the KPI tiles, both charts, and
-both breakdowns.
+Each range ships ONE sparse fact table keyed by (bucket, user, model,
+gateway), and `src/data/airia.ts` folds everything out of it: the KPI tiles,
+both charts, and all three breakdowns.
 
-It has to work this way because the user filter is a real scope, not a
-highlight — filtering by user must recompute the *model* breakdown too, which a
-pre-aggregated per-model series cannot do. It stays cheap because the
-combinations that actually occur are few: about a thousand facts across all
-five ranges, from 21k source rows. Folding on render is less work than
+It has to work this way because the filters are real scopes, not highlights
+— filtering by gateway must recompute the *model* and *user* breakdowns too,
+which pre-aggregated per-model series could not do. It stays cheap because
+the combinations that actually occur are few: a few thousand facts across
+all ranges, from 20k+ source rows. Folding on render is less work than
 shipping every pre-aggregation would be.
 
 `seriesFor(block, filter)` folds to dense per-bucket series;
-`breakdown(block, dim, users)` folds to per-model or per-user totals with
-shares. Add a dimension by adding a column to the facts, not by adding
-another pre-aggregation.
+`breakdown(block, dim, scope)` folds to per-model, per-user or per-gateway
+totals with shares. **Add a dimension by adding a column to the facts, not
+by adding another pre-aggregation** — `gatewayConfigurationId` was added
+exactly that way, and the whole change was a column, a dictionary, an
+`axis()` entry and a filter clause.
+
+Two things bite when adding one:
+
+- **`slim()` will drop it.** Rows are projected to `KEPT` as they arrive, so
+  a field that is not listed there never reaches the fold — it is not a
+  compile error, just a column of zeros. `gatewayConfigurationId` had to be
+  added to `RawRow` *and* `KEPT`.
+- **The comparison window has to learn about it too.** `PreviousWindow` is
+  keyed by every SCOPE — now (user, gateway) pairs rather than per-user
+  scalars — because a scoped window compared against an unscoped baseline
+  reports a change that never happened. Types do not catch this: the old
+  code indexed `spend[i]` by user position and kept compiling. Model stays
+  out of it on purpose: isolate is a view, not a scope, and the tiles
+  ignore it.
+
+Verified by partitioning: the previous window summed over every gateway,
+and again over every user, both equal the unpartitioned total exactly.
 
 ## Window anchoring
 
@@ -455,17 +474,18 @@ nothing at all.
 
 Two different mechanisms, and the difference matters:
 
-- **The user filter is a SCOPE.** It behaves like changing the range:
-  everything recomputes, including both breakdowns. **An empty selection means
-  ALL users, not none** — treating it as none would blank the dashboard when
-  someone unticks their last choice.
+- **The user and gateway filters are SCOPES.** They behave like changing the
+  range: everything recomputes, including all three breakdowns. **An empty
+  selection means ALL, not none** — treating it as none would blank the
+  dashboard when someone unticks their last choice. The two INTERSECT: two
+  users and one gateway means those users' traffic on that gateway.
 - **Isolate is a VIEW on top of that scope.** It never escapes the filter, so
   the grey ghost is the filtered whole and the isolated share is a share of
   the filter, not of the tenant.
 
-Isolate is **single-selection across both dimensions** (`{ dim, key } | null`),
-so isolating a user clears an isolated model and vice versa. Two ghost overlays
-at once would be meaningless.
+Isolate is **single-selection across all three dimensions**
+(`{ dim, key } | null`), so isolating a gateway clears an isolated model and
+vice versa. Two ghost overlays at once would be meaningless.
 
 A controlled multi-select must expose a **relative** toggle (`onToggle(value)`),
 not an absolute `onChange(nextSet)`. Computing the next Set from the `selected`
@@ -656,10 +676,37 @@ In memory by default (`src/lib/apiKey.ts`). "Remember" is opt-in and uses
 shared machine. Never put it in a URL, a log, or the page title. `maskKey()`
 for anything shown on screen.
 
+## Gateway configurations
+
+`gatewayConfigurationId` is on every recent Gateway row and is a third
+breakdown dimension and a second scope. Rows from before it was recorded —
+all of them a year ago — group under `NO_GATEWAY`, for the same reason
+`SERVICE_KEY` exists: a breakdown that silently drops rows makes every
+percentage wrong.
+
+**Names come from somewhere else, and may not come at all.** Executions
+carry only a UUID. `src/lib/airia/gateways.ts` fetches names from a separate
+endpoint and is built so that failure is ordinary: any non-OK response
+yields no names, `gatewayLabel()` falls back to the first 8 characters of
+the id, and nothing else on the page notices. That is not defensive
+padding — the names endpoint is a different resource and may want a
+different key or scope than the one pasted into the dashboard, so a version
+that only worked when the lookup succeeded would be broken for most keys.
+
+The fetch is deliberately outside `LoadState`: the dashboard neither waits
+for it nor fails with it, and labels simply re-render if names arrive late.
+
+`NAMES_URL` and `readNames()` are the two things to change when the endpoint
+is confirmed; `readNames` is already shape-tolerant about the envelope and
+the field names.
+
 ## User attribution
 
-`userEmail` is **empty on about 37% of gateway rows**: those requests were made
-with the tenant's standard service key rather than an individual's. They are
+`userEmail` is empty on the rows made with the tenant's standard service key
+rather than an individual's. **Its share is not a fixed fraction and the
+docs used to claim one**: measured across this tenant's year, every row 12
+months ago had no user, against about 1% of the last 30 days. Quote it for a
+window or not at all. They are
 grouped under an explicit `Standard Key (service)` member rather than dropped,
 so the Users breakdown always reconciles with the totals — omitting a third of
 the spend would make every percentage wrong. The label comes from

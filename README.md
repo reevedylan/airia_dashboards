@@ -86,8 +86,8 @@ independent of isolate.
 They stay separate deliberately. They are different signals and they diverge
 when the usage mix shifts toward pricier models.
 
-**A breakdown card** with two tabs, *By model* and *By user*, sharing one
-column set: spend, % spend, tokens in, tokens out, % tokens, and the per-row
+**A breakdown card** with three tabs, *By model*, *By user* and *By gateway*,
+sharing one column set: spend, % spend, tokens in, tokens out, % tokens, and the per-row
 rate card (`in $/M`, `out $/M`). Searchable, sortable, show-top-N.
 
 ### Time ranges
@@ -164,10 +164,11 @@ page — only a rejected key does that.
 
 Two different mechanisms:
 
-- **The user filter is a scope.** A searchable multi-select beside the range
-  tabs. Pick users and *everything* recomputes against only their data — KPI
-  tiles, both charts, both breakdowns — exactly like changing the range. An
-  empty selection means all users.
+- **The user and gateway filters are scopes.** Searchable multi-selects
+  beside the range tabs. Pick users, or gateway configurations, or both, and
+  *everything* recomputes against only that traffic — KPI tiles, both charts,
+  all three breakdowns, and the period comparison — exactly like changing the
+  range. The two intersect, and an empty selection means all.
 - **Clicking a row isolates it.** Both charts then show that model or user
   alone, with the *currently scoped* whole behind it in grey on the same scale,
   so absolute shape and share read at once. Isolate sits on top of the filter
@@ -222,10 +223,15 @@ of sync; don't reintroduce a second copy.
   corrupt when they were merely older.
 - **Money arrives as 11-decimal strings** and is accumulated as scaled
   integers, then converted once. Floats drift over 10⁵ rows.
-- **~37% of rows carry no user.** Those requests used the tenant's standard
-  service key rather than an individual's, and are grouped under an explicit
-  `Standard Key (service)` member — dropping them would hide a third of the
-  spend and make every percentage wrong.
+- **Some rows carry no user, and some no gateway.** Service-key requests have
+  no `userEmail`, and rows predating gateway attribution have no
+  `gatewayConfigurationId`. Both are grouped under explicit members rather
+  than dropped — omitting them would make every percentage wrong. Neither
+  share is stable: every row a year ago had no user, against ~1% of the last
+  30 days.
+- **Gateway names live on another endpoint.** Executions carry only a UUID,
+  so names are fetched separately and the dashboard falls back to a short id
+  if that lookup is unavailable to the key in use.
 
 Every row's token counts and charge amounts are checked to sum to the reported
 totals, and the mismatch count is printed in the page footer. It has been zero

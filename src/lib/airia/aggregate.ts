@@ -12,6 +12,8 @@ export interface RawRow {
   providerType?: string
   modelName?: string
   userEmail?: string | null
+  /** Which gateway configuration served the call. Null on older rows. */
+  gatewayConfigurationId?: string | null
   inputTokenCountConsumed?: number
   cachedInputTokenCountConsumed?: number
   outputTokenCountConsumed?: number
@@ -38,6 +40,7 @@ export interface RawRow {
  */
 const KEPT: readonly (keyof RawRow)[] = [
   'executionDateTime', 'executionSourceType', 'providerType', 'modelName', 'userEmail',
+  'gatewayConfigurationId',
   'inputTokenCountConsumed', 'cachedInputTokenCountConsumed', 'outputTokenCountConsumed',
   'totalTokenCountConsumed',
   'inputTokenAmountConsumed', 'cachedInputTokenAmountConsumed', 'outputTokenAmountConsumed',
@@ -82,9 +85,22 @@ export const isCalendar = (s: RangeSpec): s is Extract<RangeSpec, { months: numb
 
 export type RangeName = keyof typeof RANGE_SPECS
 
-/** Requests with no user — made with the tenant's standard service key rather
- *  than an individual's. About a third of gateway traffic. */
+/**
+ * Requests with no user — made with the tenant's standard service key rather
+ * than an individual's.
+ *
+ * Its share moves a lot with the window and is not a fixed fraction: every
+ * row a year ago had no user, against about 1% of the last thirty days.
+ */
 export const SERVICE_KEY = 'Standard Key (service)'
+
+/**
+ * Calls with no gateway configuration on the row. Common in older history —
+ * every row a year ago is one — so they are grouped rather than dropped,
+ * for the same reason `SERVICE_KEY` exists: a breakdown that silently
+ * omits rows makes every percentage on the page wrong.
+ */
+export const NO_GATEWAY = 'No gateway recorded'
 
 /* --------------------------------------------------------------- decimal -- */
 
@@ -269,23 +285,33 @@ function splitCharges(charges: RawRow['additionalCharges'], seen: Set<string>) {
 
 /* ------------------------------------------------------------ fact table -- */
 
+/** Keyed by (bucket, user, model, gateway); `g` indexes `RangeBlock.gateways`. */
 export interface Facts {
-  b: number[]; u: number[]; m: number[]; ex: number[]
+  b: number[]; u: number[]; m: number[]; g: number[]; ex: number[]
   tIn: number[]; tCa: number[]; tOu: number[]
   cIn: number[]; cCa: number[]; cOu: number[]; cWr: number[]; cOt: number[]
 }
 
 /**
  * Totals for the window immediately before this one, of equal length and
- * non-overlapping. Kept as per-user scalars rather than a second fact table:
- * the KPI tiles only need three numbers, and the user filter only needs them
- * split by user.
+ * non-overlapping.
  *
- * Arrays are parallel to `RangeBlock.users`.
+ * Sparse, and keyed by every SCOPE — user and gateway — rather than by user
+ * alone. It has to be: a scope recomputes the whole page including the
+ * comparison, so per-user scalars could not answer "the previous window for
+ * this user ON THIS GATEWAY" and the tiles would have compared a filtered
+ * window against an unfiltered baseline. Model is deliberately absent:
+ * isolate is a view, not a scope, and the tiles ignore it.
+ *
+ * Still far smaller than a second fact table — no buckets, and only the
+ * (user, gateway) pairs that actually occur.
  */
 export interface PreviousWindow {
   from: number
   to: number
+  /** Parallel arrays: `u` indexes `users`, `g` indexes `gateways`. */
+  u: number[]
+  g: number[]
   spend: number[]
   tokens: number[]
   executions: number[]
@@ -298,6 +324,8 @@ export interface RangeBlock {
   x: number[]
   users: string[]
   models: string[]
+  /** Gateway configuration ids seen in this window, in first-seen order. */
+  gateways: string[]
   facts: Facts
   previous: PreviousWindow
 }
@@ -527,7 +555,10 @@ export function aggregate(
     facts: new Map<string, ReturnType<typeof emptyFact>>(),
     users: new Map<string, number>(),
     models: new Map<string, number>(),
-    prev: new Map<number, { spend: bigint; tokens: number; ex: number }>(),
+    gateways: new Map<string, number>(),
+    // Keyed "user|gateway": every SCOPE, so a filtered window is compared
+    // against a baseline filtered the same way.
+    prev: new Map<string, { spend: bigint; tokens: number; ex: number }>(),
   })
 
   /* The custom window folds in the SAME pass as the presets, out of the same
@@ -580,6 +611,7 @@ export function aggregate(
 
     const model = row.modelName || '(unspecified)'
     const user = (row.userEmail ?? '').trim() || SERVICE_KEY
+    const gateway = (row.gatewayConfigurationId ?? '').trim() || NO_GATEWAY
     let counted = false
 
     for (const r of ranges) {
@@ -590,9 +622,10 @@ export function aggregate(
         // which the KPI tiles compare against.
         if (t >= r.prevFrom && t < r.prevTo) {
           if (!r.users.has(user)) r.users.set(user, r.users.size)
-          const ui = r.users.get(user)!
-          let acc = r.prev.get(ui)
-          if (!acc) { acc = { spend: 0n, tokens: 0, ex: 0 }; r.prev.set(ui, acc) }
+          if (!r.gateways.has(gateway)) r.gateways.set(gateway, r.gateways.size)
+          const pk = `${r.users.get(user)}|${r.gateways.get(gateway)}`
+          let acc = r.prev.get(pk)
+          if (!acc) { acc = { spend: 0n, tokens: 0, ex: 0 }; r.prev.set(pk, acc) }
           acc.spend += amtIn + amtCached + amtOut + write + other
           acc.tokens += tok.input + tok.cached + tok.output
           acc.ex += 1
@@ -603,7 +636,8 @@ export function aggregate(
       counted = true
       if (!r.users.has(user)) r.users.set(user, r.users.size)
       if (!r.models.has(model)) r.models.set(model, r.models.size)
-      const fk = `${bi}|${r.users.get(user)}|${r.models.get(model)}`
+      if (!r.gateways.has(gateway)) r.gateways.set(gateway, r.gateways.size)
+      const fk = `${bi}|${r.users.get(user)}|${r.models.get(model)}|${r.gateways.get(gateway)}`
       let f = r.facts.get(fk)
       if (!f) { f = emptyFact(); r.facts.set(fk, f) }
       f.tIn += tok.input; f.tCa += tok.cached; f.tOu += tok.output
@@ -616,10 +650,10 @@ export function aggregate(
 
   const out = {} as RangeMap
   for (const r of ranges) {
-    const c: Facts = { b: [], u: [], m: [], ex: [], tIn: [], tCa: [], tOu: [], cIn: [], cCa: [], cOu: [], cWr: [], cOt: [] }
+    const c: Facts = { b: [], u: [], m: [], g: [], ex: [], tIn: [], tCa: [], tOu: [], cIn: [], cCa: [], cOu: [], cWr: [], cOt: [] }
     for (const [fk, f] of r.facts) {
-      const [b, u, m] = fk.split('|').map(Number)
-      c.b.push(b); c.u.push(u); c.m.push(m); c.ex.push(f.ex)
+      const [b, u, m, g] = fk.split('|').map(Number)
+      c.b.push(b); c.u.push(u); c.m.push(m); c.g.push(g); c.ex.push(f.ex)
       c.tIn.push(f.tIn); c.tCa.push(f.tCa); c.tOu.push(f.tOu)
       c.cIn.push(fromScaled(f.cIn)); c.cCa.push(fromScaled(f.cCa)); c.cOu.push(fromScaled(f.cOu))
       c.cWr.push(fromScaled(f.cWr)); c.cOt.push(fromScaled(f.cOt))
@@ -635,14 +669,18 @@ export function aggregate(
       x: r.bounds,
       users: [...r.users.keys()],
       models: [...r.models.keys()],
+      gateways: [...r.gateways.keys()],
       facts: c,
-      previous: {
-        from: r.prevFrom,
-        to: r.prevTo,
-        spend: [...r.users.values()].map((ui) => fromScaled(r.prev.get(ui)?.spend ?? 0n)),
-        tokens: [...r.users.values()].map((ui) => r.prev.get(ui)?.tokens ?? 0),
-        executions: [...r.users.values()].map((ui) => r.prev.get(ui)?.ex ?? 0),
-      },
+      previous: (() => {
+        // Sparse, like the facts: only the (user, gateway) pairs that occur.
+        const p: PreviousWindow = { from: r.prevFrom, to: r.prevTo, u: [], g: [], spend: [], tokens: [], executions: [] }
+        for (const [pk, acc] of r.prev) {
+          const [u, g] = pk.split('|').map(Number)
+          p.u.push(u); p.g.push(g)
+          p.spend.push(fromScaled(acc.spend)); p.tokens.push(acc.tokens); p.executions.push(acc.ex)
+        }
+        return p
+      })(),
     }
   }
 

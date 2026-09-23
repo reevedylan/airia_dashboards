@@ -9,9 +9,11 @@ import { bucketFormat, compact, currency, full, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown, runningTotal,
   previousTotals, delta, dayOf, endOfDay, stepWindow, oldestEndDay, retentionFloor,
-  stepRange, rangeDays, RETENTION_DAYS,
-  type Dimension, type BreakdownRow, type History, type DayRange,
+  stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
+  type Dimension, type BreakdownRow, type History, type DayRange, type Scope,
 } from './data/airia'
+import { gatewayLabel, gatewayTitle } from './lib/airia/gateways'
+import { NO_GATEWAY } from './lib/airia/aggregate'
 import { useApiKey, maskKey } from './lib/apiKey'
 import { PaletteSheet } from './demo/PaletteSheet'
 import { useTheme } from './lib/theme'
@@ -39,7 +41,7 @@ const C = {
  *  render two ghost overlays at once. */
 type Isolate = { dim: Dimension; key: string } | null
 
-const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users' }
+const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users', gateway: 'gateways' }
 
 export default function App() {
   const [range, setRange] = useState<RangeKey>('3M')
@@ -48,6 +50,9 @@ export default function App() {
   const [hovered, setHovered] = useState<string | null>(null)
   /** Empty means every user — a filter that excludes nothing, not everything. */
   const [userFilter, setUserFilter] = useState<Set<string>>(new Set())
+  /** Same contract for gateways: empty is ALL, so unticking the last one
+   *  cannot blank the dashboard. */
+  const [gatewayFilter, setGatewayFilter] = useState<Set<string>>(new Set())
   const [isolate, setIsolate] = useState<Isolate>(null)
   const [tab, setTab] = useState<Dimension>('model')
   /** Where the window ENDS. null means the live, ending-now window. */
@@ -68,27 +73,29 @@ export default function App() {
   const data = load.data
   const busy = load.status === 'loading'
   const allUsers = useAllUsers(data)
+  const allGateways = useAllGateways(data)
+  const gwNames = useGatewayNames(key)
   const block = data ? (custom ? data.ranges.custom ?? null : data.ranges[range]) : null
 
-  /* The user filter is a SCOPE: everything below derives from `scoped`, so the
-     KPI tiles, both charts and both breakdowns all recompute together. */
-  const scoped = useMemo(
-    () => (block ? seriesFor(block, { users: userFilter }) : null),
-    [block, userFilter],
+  /* The filters are SCOPES: everything below derives from `scope`, so the
+     KPI tiles, both charts and all three breakdowns recompute together.
+     They intersect — picking two users and one gateway means those users'
+     traffic ON that gateway. */
+  const scope: Scope = useMemo(
+    () => ({ users: userFilter, gateways: gatewayFilter }),
+    [userFilter, gatewayFilter],
   )
-  const modelRows = useMemo(
-    () => (block ? breakdown(block, 'model', userFilter) : []),
-    [block, userFilter],
-  )
-  const userRows = useMemo(
-    () => (block ? breakdown(block, 'user', userFilter) : []),
-    [block, userFilter],
-  )
+  const scoped = useMemo(() => (block ? seriesFor(block, scope) : null), [block, scope])
+  const rowsByDim = useMemo(() => ({
+    model: block ? breakdown(block, 'model', scope) : [],
+    user: block ? breakdown(block, 'user', scope) : [],
+    gateway: block ? breakdown(block, 'gateway', scope) : [],
+  }), [block, scope])
 
   /* An isolation that no longer matches anything in scope is dropped rather
      than left to render an empty chart — a model or user present in 3M may
      have nothing in 24H, and a user filter can exclude one outright. */
-  const rowsFor = (dim: Dimension) => (dim === 'model' ? modelRows : userRows)
+  const rowsFor = (dim: Dimension) => rowsByDim[dim]
   const activeRow: BreakdownRow | null =
     isolate ? rowsFor(isolate.dim).find((r) => r.key === isolate.key) ?? null : null
   const active = activeRow ? isolate : null
@@ -99,11 +106,12 @@ export default function App() {
     if (!block) return null
     if (!active) return scoped
     return seriesFor(block, {
-      users: userFilter,
+      ...scope,
       model: active.dim === 'model' ? active.key : undefined,
       user: active.dim === 'user' ? active.key : undefined,
+      gateway: active.dim === 'gateway' ? active.key : undefined,
     })
-  }, [block, scoped, active, userFilter])
+  }, [block, scoped, active, scope])
 
   const fmtX = useMemo(() => (block ? bucketFormat(block.bucketMs, block.zone) : null), [block])
   /**
@@ -125,6 +133,9 @@ export default function App() {
   }, [block, fmtX])
 
   const serviceKey = data?.meta.serviceKeyLabel ?? 'Standard Key (service)'
+  /** Whether the name lookup came back with anything — the gateway tab says
+   *  so, rather than leaving a column of hex unexplained. */
+  const hasNames = Object.keys(gwNames).length > 0
 
   /* Duration is the range buttons; the anchor moves that window through
      time. Stepping is in the range's OWN units — calendar months for 1M and
@@ -190,21 +201,33 @@ export default function App() {
       onChange={selectPreset}
       anchor={anchorControls}
       filters={
-        <MultiSelect
-          label="User"
-          options={allUsers}
-          selected={userFilter}
-          onToggle={(v) => setUserFilter((prev) => {
-            const next = new Set(prev)
-            if (next.has(v)) next.delete(v)
-            else next.add(v)
-            return next
-          })}
-          onChange={setUserFilter}
-          allLabel="All users"
-          placeholder="Search users…"
-          renderOption={(v) => (v === serviceKey ? <em>{v}</em> : v)}
-        />
+        <>
+          <MultiSelect
+            label="User"
+            options={allUsers}
+            selected={userFilter}
+            onToggle={(v) => setUserFilter(toggle(v))}
+            onChange={setUserFilter}
+            allLabel="All users"
+            placeholder="Search users…"
+            renderOption={(v) => (v === serviceKey ? <em>{v}</em> : v)}
+          />
+          {/* Only worth showing once there is more than one to choose
+              between — a filter with a single option is furniture. */}
+          {allGateways.length > 1 ? (
+            <MultiSelect
+              label="Gateway"
+              icon={<GatewayIcon />}
+              options={allGateways}
+              selected={gatewayFilter}
+              onToggle={(v) => setGatewayFilter(toggle(v))}
+              onChange={setGatewayFilter}
+              allLabel="All gateways"
+              placeholder="Search gateways…"
+              renderOption={(v) => <span title={gatewayTitle(v, gwNames)}>{gatewayLabel(v, gwNames)}</span>}
+            />
+          ) : null}
+        </>
       }
       actions={
         <>
@@ -272,7 +295,7 @@ export default function App() {
   /* The KPI tiles compare against the window immediately before this one, of
      equal length, scoped by the same user filter. Deliberately independent of
      isolate, which is a view on the charts only. */
-  const prev = previousTotals(block, userFilter)
+  const prev = previousTotals(block, scope)
   /* A comparison window that reaches past the retention limit is not a
      comparison: the rows are gone, so the baseline is short by however much
      expired, and the tile would report a rise that is really a deletion. */
@@ -289,7 +312,7 @@ export default function App() {
   const bucketNote = `One bar per ${bucketLabel(block.bucketMs)} · ${block.zone}`
   const cumNote = `Running total from zero · ${bucketLabel(block.bucketMs)} steps · ${block.zone}`
   const isolationNote = activeRow
-    ? `${activeRow.key} — ${share(activeRow.shareTokens)} of tokens, ` +
+    ? `${isolate!.dim === 'gateway' ? gatewayLabel(activeRow.key, gwNames) : activeRow.key} — ${share(activeRow.shareTokens)} of tokens, ` +
       `${share(activeRow.shareSpend)} of spend · grey is all ${DIM_LABEL[isolate!.dim]}`
     : null
 
@@ -337,11 +360,22 @@ export default function App() {
         </p>
       ) : null}
 
-      {userFilter.size > 0 ? (
+      {userFilter.size > 0 || gatewayFilter.size > 0 ? (
         <p className="page__scope">
-          Scoped to {userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`} ·
-          {' '}everything below is recomputed against {userFilter.size === 1 ? 'their' : 'their combined'} data.
-          <button type="button" onClick={() => setUserFilter(new Set())}>Clear</button>
+          Scoped to {[
+            userFilter.size === 0 ? null
+              : userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`,
+            gatewayFilter.size === 0 ? null
+              : gatewayFilter.size === 1 ? `gateway ${gatewayLabel([...gatewayFilter][0], gwNames)}`
+              : `${gatewayFilter.size} gateways`,
+          ].filter(Boolean).join(' on ')} ·
+          {' '}everything below is recomputed against that traffic alone.
+          <button
+            type="button"
+            onClick={() => { setUserFilter(new Set()); setGatewayFilter(new Set()) }}
+          >
+            Clear
+          </button>
         </p>
       ) : null}
 
@@ -544,7 +578,11 @@ export default function App() {
                 ariaLabel="Breakdown dimension"
                 value={tab}
                 onChange={setTab}
-                tabs={[{ key: 'model', label: 'By model' }, { key: 'user', label: 'By user' }]}
+                tabs={[
+                  { key: 'model', label: 'By model' },
+                  { key: 'user', label: 'By user' },
+                  ...(allGateways.length > 1 ? [{ key: 'gateway' as const, label: 'By gateway' }] : []),
+                ]}
               />
               {active ? (
                 <ToolbarButton size="sm" icon={<ClearIcon />} onClick={() => setIsolate(null)}>
@@ -555,7 +593,7 @@ export default function App() {
           }
           table={{
             columns: [
-              { key: 'k', label: tab === 'model' ? 'Model' : 'User' },
+              { key: 'k', label: DIM_HEADING[tab] },
               { key: 'c', label: 'Spend', align: 'right' },
               { key: 'cs', label: '% spend', align: 'right' },
               { key: 'ti', label: 'Tokens in', align: 'right' },
@@ -566,7 +604,7 @@ export default function App() {
               { key: 'n', label: 'Executions', align: 'right' },
             ],
             rows: breakdownRows.map((r) => ({
-              k: r.key,
+              k: tab === 'gateway' ? gatewayLabel(r.key, gwNames) : r.key,
               c: currency(r.spend),
               cs: share(r.shareSpend),
               ti: full(r.tokensIn),
@@ -583,8 +621,9 @@ export default function App() {
                 ? `Both charts are showing this ${active.dim} only. Click the row again, or "Show all ${DIM_LABEL[active.dim]}", to return to the combined view.`
                 : `Click a ${tab} to show it on its own in both charts, with the all-${DIM_LABEL[tab]} total behind it.`}
               {tab === 'user' ? ` Requests made with the tenant's standard service key rather than an individual's are grouped as ${serviceKey}.` : ''}
-              {tab === 'user' && userFilter.size > 0
-                ? ' This list is scoped by the User filter too — use the filter above to change the selection.'
+              {tab === 'gateway' ? ` One row per gateway configuration. Calls from before gateways were recorded are grouped as ${NO_GATEWAY}${hasNames ? '' : ', and the rest are shown by the first block of their id'}.` : ''}
+              {(userFilter.size > 0 || gatewayFilter.size > 0)
+                ? ' This list is scoped by the filters above too.'
                 : ''}
             </p>
           }
@@ -596,7 +635,7 @@ export default function App() {
             key={tab}
             rows={breakdownRows.map((r) => ({
               key: r.key,
-              label: r.key,
+              label: tab === 'gateway' ? gatewayLabel(r.key, gwNames) : r.key,
               value: r.spend,
               cells: {
                 shareSpend: r.shareSpend,
@@ -607,13 +646,13 @@ export default function App() {
                 outputRate: r.outputRate,
               },
             }))}
-            labelHeading={tab === 'model' ? 'Model' : 'User'}
+            labelHeading={DIM_HEADING[tab]}
             valueHeading="Spend"
             columns={shareColumns}
             limit={6}
             sortable
             searchable
-            searchPlaceholder={tab === 'model' ? 'Search models…' : 'Search users…'}
+            searchPlaceholder={`Search ${DIM_LABEL[tab]}…`}
             selectedKey={active?.dim === tab ? active.key : null}
             onSelect={(key) => setIsolate(key == null ? null : { dim: tab, key })}
             formatValue={(n) => currency(n)}
@@ -636,6 +675,17 @@ export default function App() {
       <PaletteSheet />
     </div>
   )
+}
+
+const DIM_HEADING: Record<Dimension, string> = { model: 'Model', user: 'User', gateway: 'Gateway' }
+
+/** A relative toggle: computing the next Set from a prop loses one of two
+ *  toggles landing in the same render batch. */
+const toggle = (value: string) => (prev: Set<string>): Set<string> => {
+  const next = new Set(prev)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
 }
 
 /** "1 day", "31 days" — a count always reads beside its unit. */
@@ -701,6 +751,14 @@ function Head() {
 const ClearIcon = () => (
   <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
     <path d="M4 4l8 8M12 4l-8 8" />
+  </svg>
+)
+
+/** A hub with spokes: several routes through one door. */
+const GatewayIcon = () => (
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="2" y="6.25" width="12" height="7.25" rx="1.75" />
+    <path d="M5.25 6.25V4.5a2.75 2.75 0 015.5 0v1.75M8 9v1.75" />
   </svg>
 )
 
