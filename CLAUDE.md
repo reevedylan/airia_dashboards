@@ -466,10 +466,14 @@ went from ~9s to ~2.7s at its worst, and ~0.4s once the first slice lands.
   deliberately oversized 400-day window was pushed through `fetchAll` and
   came back whole, 320,826 rows after one split. That is what protects a
   tenant dense enough to fill a 15-day chunk.
-- The API returns **403s under sustained parallel load** — a 900-request
-  retry storm locked it out for minutes — but the limiter counts requests,
-  and a year is now 29 of them, so background work runs at the same width as
-  foreground work.
+- **403s: blame the client, not the load.** These notes used to say the API
+  throttles under sustained parallel load. On the evidence it does not, and
+  that was a misreading: `curl` and the browser succeed at concurrency 6
+  where Python's `urllib` gets 403 on the *first* request to the same URL
+  with the same key. It looks like a user-agent or client-fingerprint block.
+  The browser path has never been throttled, so background work runs at the
+  same width as foreground work — but for the reason that there is no
+  evidence against it, not because a request budget was measured.
 
 ## Period comparison
 

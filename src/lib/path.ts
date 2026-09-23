@@ -51,16 +51,3 @@ export function barPath(x: number, y: number, w: number, h: number, r: number): 
   return `M${x},${y + rr}a${rr},${rr} 0 0 1 ${rr},${-rr}h${w - rr * 2}a${rr},${rr} 0 0 1 ${rr},${rr}v${h - rr}h${-w}Z`
 }
 
-/** Donut segment. Angles in radians, clockwise from 12 o'clock. */
-export function arcPath(cx: number, cy: number, rOuter: number, rInner: number, a0: number, a1: number): string {
-  const sweep = a1 - a0
-  const large = sweep > Math.PI ? 1 : 0
-  const p = (r: number, a: number) => `${(cx + r * Math.sin(a)).toFixed(3)},${(cy - r * Math.cos(a)).toFixed(3)}`
-  return [
-    `M${p(rOuter, a0)}`,
-    `A${rOuter},${rOuter} 0 ${large} 1 ${p(rOuter, a1)}`,
-    `L${p(rInner, a1)}`,
-    `A${rInner},${rInner} 0 ${large} 0 ${p(rInner, a0)}`,
-    'Z',
-  ].join('')
-}

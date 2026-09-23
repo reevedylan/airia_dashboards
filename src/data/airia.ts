@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RangeKey } from '../components'
 import {
-  aggregate, earliestBoundary, prefetchBoundary, isCalendar, makeZone, calendarStartDay,
+  aggregate, earliestBoundary, prefetchBoundary, isCalendar, makeZone,
   customWindow, grainFor, RANGE_SPECS, SERVICE_KEY,
   type AggregateResult, type CustomSpec, type RangeMap,
 } from '../lib/airia/aggregate'
@@ -161,13 +161,13 @@ export function dayOf(t: number): string {
  * 3M the last bar is that whole day, on 1M its PM half, on 24H its last
  * quarter hour.
  */
-export function endOfDay(day: Day): number {
+function endOfDay(day: Day): number {
   const [y, m, d] = day.split('-').map(Number)
   return Z.midnight(y, m, d + 1) - 1
 }
 
 /** The instant a local day BEGINS — midnight, in the data's zone. */
-export function startOfDay(day: Day): number {
+function startOfDay(day: Day): number {
   const [y, m, d] = day.split('-').map(Number)
   return Z.midnight(y, m, d)
 }
@@ -237,7 +237,7 @@ export function oldestEndDay(range: RangeKey): Day {
 
 /** Clamp an anchor into the selectable range — used when the range changes
  *  under an anchor that was legal for the old one. */
-export function clampAnchor(range: RangeKey, anchor: number | null): number | null {
+function clampAnchor(range: RangeKey, anchor: number | null): number | null {
   if (anchor == null) return null
   return Math.max(anchor, endOfDay(oldestEndDay(range)))
 }
@@ -277,12 +277,6 @@ export function stepRange(range: DayRange, dir: -1 | 1): DayRange {
   if (shifted.from < floor) return { from: floor, to: addDays(floor, days - 1) }
   if (shifted.to > today) return { from: addDays(today, -(days - 1)), to: today }
   return shifted
-}
-
-/** The first day of the window a given range would show ending on `day`. */
-export function windowStartDay(range: RangeKey, day: Day): Day {
-  const spec = RANGE_SPECS[range]
-  return isCalendar(spec) ? calendarStartDay(day, spec.months) : addDays(day, -(presetDays(range) - 1))
 }
 
 /**

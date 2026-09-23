@@ -26,7 +26,7 @@ export function niceDomain(min: number, max: number, targetTicks = 4): [number, 
   return [Math.floor(min / step) * step, Math.ceil(max / step) * step]
 }
 
-export function tickStep(min: number, max: number, count: number): number {
+function tickStep(min: number, max: number, count: number): number {
   const raw = (max - min) / Math.max(1, count)
   const mag = 10 ** Math.floor(Math.log10(raw))
   const norm = raw / mag
@@ -79,42 +79,6 @@ export function bandScale(count: number, width: number, gap = 2, maxWidth = 24):
 
 export type Reducer = 'sum' | 'mean' | 'max' | 'last'
 
-/**
- * Collapse a long series to at most `target` buckets.
- *
- * A 90-day cost chart at 1-hour resolution is 2,160 bars — more bars than the
- * card has pixels. Rather than drawing sub-pixel slivers (which alias into a
- * grey smear and lie about the shape), bucket first. Counts and money `sum`;
- * rates and latencies `mean`.
- */
-export function downsample<T>(
-  rows: readonly T[],
-  target: number,
-  value: (row: T) => number,
-  reducer: Reducer = 'mean',
-): { rows: T[]; values: number[]; bucketSize: number } {
-  if (rows.length <= target || target <= 0) {
-    return { rows: [...rows], values: rows.map(value), bucketSize: 1 }
-  }
-  const size = Math.ceil(rows.length / target)
-  const outRows: T[] = []
-  const outValues: number[] = []
-  for (let i = 0; i < rows.length; i += size) {
-    const slice = rows.slice(i, i + size)
-    const nums = slice.map(value)
-    let v: number
-    switch (reducer) {
-      case 'sum': v = nums.reduce((a, b) => a + b, 0); break
-      case 'max': v = Math.max(...nums); break
-      case 'last': v = nums[nums.length - 1]; break
-      default: v = nums.reduce((a, b) => a + b, 0) / nums.length
-    }
-    // Keep the middle row as the bucket's representative (its timestamp).
-    outRows.push(slice[Math.floor(slice.length / 2)])
-    outValues.push(v)
-  }
-  return { rows: outRows, values: outValues, bucketSize: size }
-}
 
 /** Clamp a value into a range. */
 export const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)

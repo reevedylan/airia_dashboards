@@ -17,7 +17,7 @@ export const dayISO = (y: number, m: number, d: number): Day => `${y}-${pad(m)}-
 /** UTC midnight of a civil day — a handle for arithmetic, not an instant. */
 export const dayDate = (day: Day): Date => new Date(`${day}T00:00:00Z`)
 
-export const dayOfDate = (d: Date): Day => dayISO(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate())
+const dayOfDate = (d: Date): Day => dayISO(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate())
 
 /** `{ y, m, d }` with a 1-based month, the way a date is written. */
 export const dayParts = (day: Day) => {
@@ -47,7 +47,7 @@ export function addMonths(day: Day, n: number): Day {
 export const monthOf = (day: Day): string => day.slice(0, 7)
 
 /** Whole days from `a` to `b`; negative when `b` is earlier. */
-export const daysBetween = (a: Day, b: Day): number =>
+const daysBetween = (a: Day, b: Day): number =>
   Math.round((dayDate(b).getTime() - dayDate(a).getTime()) / 86_400_000)
 
 /** Days in the inclusive span `a`..`b`, which is what a date range means. */

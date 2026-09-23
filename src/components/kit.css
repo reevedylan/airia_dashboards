@@ -206,24 +206,6 @@
 
 .viz-sparkline { display: block; overflow: visible; }
 
-/* ----------------------------------------------------------------- donut -- */
-
-.viz-donut__centre {
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 3px; pointer-events: none; text-align: center;
-}
-.viz-donut__value {
-  font: 700 26px/1.1 var(--viz-font);
-  color: var(--viz-text-primary); letter-spacing: -0.02em;
-}
-.viz-donut__label {
-  font: 500 11px/1.35 var(--viz-font);
-  color: var(--viz-text-secondary);
-  text-wrap: balance;
-}
-
 /* ------------------------------------------------------------ rank table -- */
 
 .viz-rank table { width: 100%; border-collapse: collapse; }

@@ -13,9 +13,6 @@ export const full = (n: number, maxFrac = 0): string =>
 export const currency = (n: number, maxFrac = 2): string =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: maxFrac, maximumFractionDigits: maxFrac })
 
-export const currencyCompact = (n: number): string =>
-  Math.abs(n) < 10_000 ? currency(n, 2) : '$' + COMPACT.format(n)
-
 /** Seconds with a unit, e.g. "6.058 s". */
 export const seconds = (n: number, digits = 3): string => `${n.toFixed(digits)} s`
 
