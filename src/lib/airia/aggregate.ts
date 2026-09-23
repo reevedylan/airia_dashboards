@@ -524,6 +524,23 @@ export function aggregate(
 }
 
 /**
+ * Earliest instant ONE STEP BACK would need.
+ *
+ * The window before this one, plus that window's own comparison period —
+ * for 3M, nine calendar months. Worth fetching up front: stepping back is
+ * the first thing anyone does after reading the live window, and without
+ * these rows that click is a cache miss however much history is cached
+ * behind it.
+ */
+export function prefetchBoundary(now: number, zone: string): number {
+  const Z = makeZone(zone)
+  return Math.min(...Object.values(RANGE_SPECS).map((spec) => {
+    const here = windowFor(Z, spec, now)
+    return windowFor(Z, spec, here.bounds[0] - 1).prevFrom
+  }))
+}
+
+/**
  * Earliest instant any range needs, so one fetch covers them all.
  *
  * Reaches back twice each range's extent, because the KPI tiles compare

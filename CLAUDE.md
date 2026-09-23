@@ -277,44 +277,84 @@ One consequence worth keeping: near the floor the COMPARISON window falls
 off the end of retention, so `App.tsx` drops the KPI deltas and says why.
 Showing them would report a rise that is really a deletion.
 
-## Prefetching history
+## Prefetching history, and why a step back used to cost a fetch
 
 After first paint, `useAiriaLive` reaches back to the **one-year retention
-floor** in 14-day slices, in the background, at a lower concurrency.
-
-Measured, before choosing:
+floor** in the background. Measured, before choosing:
 
 | | rows | heap held |
 |---|---|---|
 | 180 days (what the ranges need) | 156,406 | ~122 MB raw |
 | 365 days (retention) | 320,246 | ~249 MB raw, ~149 MB projected |
 
-So: not a bigger first load — that would have roughly doubled a 9-second
-wait for history most sessions never open — and not raw rows either.
-`slim()` in `aggregate.ts` projects each row to the fourteen fields the
-aggregation reads as it arrives (~780 → ~470 bytes), which is what makes a
-year affordable at all. Every row survives the projection, so the
-kept-of-fetched counts still mean what they say. **Add a field to `RawRow`
-and add it to `KEPT`, or it will be silently dropped.**
+Not a bigger first load — that would have doubled a first paint for history
+most sessions never open — and not raw rows either. `slim()` in
+`aggregate.ts` projects each row to the fourteen fields the aggregation
+reads as it arrives (~780 → ~470 bytes), which is what makes a year
+affordable. Every row survives the projection, so the kept-of-fetched counts
+still mean what they say. **Add a field to `RawRow` and add it to `KEPT`, or
+it will be silently dropped.**
 
-Two things keep this from corrupting the figures:
+### Reach one step back FIRST
 
-- **One writer at a time.** Foreground fold and background backfill both
-  extend the same array through a promise-chain mutex. Two overlapping
-  fetches would prepend the same rows twice and double everything on the
-  page.
-- **The foreground cuts in.** It aborts the in-flight backfill slice rather
-  than queueing behind it, and an aborted slice is discarded whole, never
-  half-prepended.
+Stepping back one window needs rows three months older than anything the
+first load fetched — the new window is three months back, and its own
+comparison period is three months before *that*. So "previous 3M" was a
+genuine cache miss no matter how much history was queued behind it.
 
-The API returns **403s under sustained parallel load** — a 180-window sweep
-at concurrency 6 tripped it for minutes — so the backfill runs at
-`BACKGROUND_CONCURRENCY`, and nobody is waiting on it.
+`prefetchBoundary()` names that depth: the window before this one, plus its
+comparison period. The backfill's FIRST slice goes straight there, and only
+then walks the rest of the year in 90-day slices. It is the click people
+actually make next.
 
-`rowsFrom()` binary-searches the cache before folding, so a fold stays
-proportional to the window shown rather than to the year cached behind it.
-It relies on the cache being ascending by time, which holds by construction:
-each fetch returns its windows in order and older slices are prepended whole.
+It must stay in the background. Blocking the fold on that depth instead —
+tried, measured — means every step prefetches the step after it, and first
+paint went from 5.8s to 10.1s for nothing.
+
+### Four things that were quietly paying twice
+
+Each of these looked like "the fetch is slow" and was not. The step-back
+went from ~9s to ~2.7s at its worst, and ~0.4s once the first slice lands.
+
+- **A day per request.** `CHUNK_MS` was 24 hours, so six months was 184 round
+  trips. Throughput is ~12k rows/s whatever the window, so a small window
+  buys nothing and costs its own latency. Fifteen days: 29 requests for a
+  whole year instead of ~365. Thirty days measured *slower* — the server is
+  not linear in window size — so fifteen it is.
+- **Taking the cache lock to read.** A window whose rows are already held
+  needs no fetch, but it still queued behind whatever backfill slice was in
+  flight: a 0.4s re-fold waiting 5s for history it was not going to read.
+  The lock is for WRITING now. Reading while a slice lands is safe because a
+  slice replaces the array rather than mutating it.
+- **Discarding a slice that was fetching exactly what was wanted.** The
+  foreground aborted the backfill on principle. When the slice already
+  reaches as far back as the new view needs, killing it means re-requesting
+  the same ninety days. It only aborts a slice that cannot help.
+- **Committing rows on liveness instead of on the key.** The worst one. A
+  slice would finish its three-second fetch and then throw the rows away
+  because the anchor had moved while they were in flight — so the click
+  waited for that slice AND paid for the same span again. Fetched rows are
+  true whoever is waiting for them; liveness governs what is on screen, not
+  what is in the cache.
+
+### Keeping it safe
+
+- **One writer at a time.** Foreground fold and background backfill extend
+  the same array through a promise-chain mutex. Two overlapping fetches
+  would prepend the same rows twice and double everything on the page.
+- **`rowsBetween()` trims both ends** before folding, by binary search — the
+  cache is ascending by construction. The newer end matters once the window
+  is anchored in the past: those rows land in no bucket but were still being
+  walked five ranges deep, and they inflated the footer's counts.
+- **Bisection is real now.** A 365-day window returns exactly 200,000 of
+  320,825 rows — the cap is `PAGE_LIMIT`, not a server-side size limit. A
+  deliberately oversized 400-day window was pushed through `fetchAll` and
+  came back whole, 320,826 rows after one split. That is what protects a
+  tenant dense enough to fill a 15-day chunk.
+- The API returns **403s under sustained parallel load** — a 900-request
+  retry storm locked it out for minutes — but the limiter counts requests,
+  and a year is now 29 of them, so background work runs at the same width as
+  foreground work.
 
 ## Period comparison
 

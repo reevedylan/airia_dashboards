@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RangeKey } from '../components'
 import {
-  aggregate, earliestBoundary, isCalendar, makeZone, calendarStartDay,
+  aggregate, earliestBoundary, prefetchBoundary, isCalendar, makeZone, calendarStartDay,
   RANGE_SPECS, SERVICE_KEY, type AggregateResult,
 } from '../lib/airia/aggregate'
 import { addDays, addMonths, type Day } from '../lib/day'
@@ -117,11 +117,17 @@ export const retentionFloor = (): number => Date.now() - RETENTION_MS
 /**
  * How much older history one background step fetches.
  *
- * Small on purpose: a foreground fetch aborts the backfill and takes the
- * cache lock, so this bounds how long someone waits behind a slice that was
- * already in flight. Fourteen days is about a second and a half.
+ * Ninety days, which is not arbitrary: the first slice is then exactly what
+ * ONE STEP BACK on the widest range needs, so the most likely next click
+ * stops costing a fetch after the first wave rather than after the whole
+ * year has landed. It also fills a wave of parallel requests.
+ *
+ * It is no longer sized to bound how long a foreground fetch waits behind
+ * it — that wait is gone, because the foreground aborts the slice in flight
+ * and an abort is no longer retried. What a slice still costs is the work
+ * thrown away when that happens, so it is not unbounded either.
  */
-const BACKFILL_SLICE_MS = 14 * DAY_MS
+const BACKFILL_SLICE_MS = 90 * DAY_MS
 
 /* ------------------------------------------------------------ local days -- */
 
@@ -229,22 +235,30 @@ export function windowStartDay(range: RangeKey, day: Day): Day {
 }
 
 /**
- * Rows from `t` onward.
+ * The rows between two instants.
  *
  * The cache is ascending by construction — each fetch returns its windows in
- * order and older slices are prepended whole — so this is a binary search,
+ * order and older slices are prepended whole — so these are binary searches,
  * not a scan. It matters: it keeps a fold proportional to the window being
- * shown rather than to the whole year that may be cached behind it.
+ * shown rather than to the whole year that may be cached around it. Trimming
+ * the NEWER end matters too once the window is anchored in the past: those
+ * rows land in no bucket, but they were still being walked, five ranges
+ * deep, and they inflate the row counts the footer reconciles.
  */
-function rowsFrom(rows: readonly RawRow[], t: number): readonly RawRow[] {
-  let lo = 0
-  let hi = rows.length
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (Date.parse(rows[mid].executionDateTime) < t) lo = mid + 1
-    else hi = mid
+function rowsBetween(rows: readonly RawRow[], from: number, to: number): readonly RawRow[] {
+  const seek = (t: number) => {
+    let lo = 0
+    let hi = rows.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (Date.parse(rows[mid].executionDateTime) < t) lo = mid + 1
+      else hi = mid
+    }
+    return lo
   }
-  return lo === 0 ? rows : rows.slice(lo)
+  const start = seek(from)
+  const end = seek(to)
+  return start === 0 && end === rows.length ? rows : rows.slice(start, end)
 }
 
 /**
@@ -268,15 +282,17 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
    * the same rows twice and double every figure on the page.
    */
   const gate = useRef<Promise<unknown>>(Promise.resolve())
-  /** Lets the foreground cut in front of an in-flight backfill slice. */
-  const bg = useRef<AbortController | null>(null)
+  /** The backfill slice in flight, and how far back it reaches. The reach
+   *  matters: it decides whether cutting in front of it would help or
+   *  would throw away the very rows being waited for. */
+  const bg = useRef<{ ctrl: AbortController; from: number } | null>(null)
 
   useEffect(() => {
     if (!key) {
       setState({ status: 'idle', data: null })
       cache.current = null
       held.current = null
-      bg.current?.abort()
+      bg.current?.ctrl.abort()
       return
     }
 
@@ -310,22 +326,44 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
         show({ message: 'Updating…' })
         const wallNow = Date.now()
         const at = anchor ?? wallNow
-        /* Never ask for rows older than the source keeps. Near the oldest
-           selectable window the comparison period runs off the end of
-           retention, and requesting it is ninety day-windows of nothing. */
-        const needFrom = Math.max(earliestBoundary(at, ZONE), wallNow - RETENTION_MS)
+        /* What THIS view needs, and no more. Reaching further here so that
+           the next click is cheap only moves the wait: every step would
+           then prefetch the step after it, and the render would sit behind
+           rows it is not going to draw. Depth beyond this is the
+           background's job. Never past what the source keeps, either —
+           near the oldest selectable window the comparison period runs off
+           the end of retention, and asking for it fetches months of
+           nothing. */
+        const floor = wallNow - RETENTION_MS
+        const needFrom = Math.max(earliestBoundary(at, ZONE), floor)
 
         if (cache.current?.key !== key) {
           cache.current = null
           held.current = null
         }
 
-        // Cut in front of the backfill rather than queue behind all of it.
-        bg.current?.abort()
+        /*
+         * Cut in front of the backfill — but only when doing so helps.
+         *
+         * A slice already reaching at least as far back as this view needs
+         * is fetching exactly the rows being waited for, and an aborted
+         * slice is discarded whole. Killing it meant re-requesting the same
+         * ninety days in the foreground: the first step back after a load
+         * paid twice for one fetch.
+         */
+        if (bg.current && bg.current.from > needFrom) bg.current.ctrl.abort()
 
         let expected = cache.current?.rows.length ?? 0
-        await exclusive(async () => {
-          if (!live()) return
+        /*
+         * Only take the cache lock to WRITE. A window whose rows are already
+         * held needs no fetch, and queueing it behind an in-flight backfill
+         * slice made an instant re-fold wait seconds for history it was not
+         * going to read. Reading while the backfill writes is safe: a slice
+         * lands by replacing the array, never by mutating the one in hand.
+         */
+        const covered = () => cache.current != null && cache.current.from <= needFrom
+        if (!covered()) await exclusive(async () => {
+          if (!live() || covered()) return
           if (!cache.current) {
             show({ message: 'Checking the key…' })
             expected = await probe(key, needFrom, wallNow)
@@ -352,7 +390,9 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
         })
         if (!live()) return
 
-        const rows = rowsFrom(cache.current!.rows, needFrom)
+        /* One bucket past the anchor: the widest bucket is a day, and the
+           one containing `at` may end after it. */
+        const rows = rowsBetween(cache.current!.rows, needFrom, at + DAY_MS)
         show({ message: 'Aggregating…' })
         // Yield a frame so the message paints before a synchronous fold.
         await new Promise((r) => requestAnimationFrame(() => r(null)))
@@ -382,7 +422,6 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
           },
           ranges: agg.ranges as AiriaData['ranges'],
         }
-        const floor = Date.now() - RETENTION_MS
         setState({ status: 'ready', data: held.current, history: history(cache.current!.from > floor) })
 
         /*
@@ -394,11 +433,18 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
          * the wrong trade. This costs nothing anybody is watching, and once
          * it lands, stepping back is a re-fold rather than a fetch.
          */
+        /* The first thing to reach for is whatever ONE STEP BACK needs —
+           the window before this one plus its own comparison period. That
+           is the click people actually make next, and until those rows land
+           it is a cache miss however much older history is already held. */
+        const firstStop = Math.max(prefetchBoundary(at, ZONE), floor)
         while (live() && cache.current && cache.current.from > floor) {
-          const slice = new AbortController()
-          bg.current = slice
           const to = cache.current.from
-          const from = Math.max(floor, to - BACKFILL_SLICE_MS)
+          const from = to > firstStop
+            ? firstStop
+            : Math.max(floor, to - BACKFILL_SLICE_MS)
+          const slice = new AbortController()
+          bg.current = { ctrl: slice, from }
           try {
             await exclusive(async () => {
               // The foreground may have moved the cache while this waited.
@@ -407,7 +453,18 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
                 signal: slice.signal,
                 concurrency: BACKGROUND_CONCURRENCY,
               })
-              if (!live() || slice.signal.aborted || !cache.current) return
+              /*
+               * Commit on the KEY, not on liveness.
+               *
+               * These rows are valid history for this tenant whoever is
+               * waiting for them. Discarding them because the anchor moved
+               * while they were in flight was the expensive mistake: the
+               * click waited three seconds for this slice, the slice threw
+               * its answer away, and the foreground then fetched the very
+               * same span again. Liveness governs what is on SCREEN; it has
+               * no bearing on whether a fetched row is true.
+               */
+              if (slice.signal.aborted || cache.current?.key !== key || cache.current.from <= from) return
               cache.current = {
                 ...cache.current,
                 rows: rows.concat(cache.current.rows),
@@ -422,8 +479,10 @@ export function useAiriaLive(key: string | null, anchor: number | null): LoadSta
           }
           if (!live()) return
           if (slice.signal.aborted) return
+          bg.current = null
           setState((prev) => ({ ...prev, history: history(cache.current!.from > floor) }))
         }
+        bg.current = null
         if (live()) setState((prev) => ({ ...prev, history: history(false) }))
       } catch (err) {
         if (!live()) return

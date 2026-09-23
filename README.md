@@ -146,12 +146,17 @@ Whenever the window isn't the live one, the resolved range is shown beside the
 buttons with a **Jump to now** link, so it is always obvious when you're
 looking at history.
 
-Stepping is instant: raw rows are cached, so a new anchor is a re-fold rather
-than a re-fetch. The first load fetches the 180 days the ranges themselves
-need, then keeps reaching back to the one-year retention limit in the
-background, so stepping rarely needs the network at all. When it does, the
-dashboard you were looking at stays on screen, dimmed, with a progress line
-— it never drops back to the key page. Only a rejected key does that.
+Stepping is instant: raw rows are cached, so a new anchor is a re-fold
+(~0.4s) rather than a re-fetch. The first load fetches the six months the
+ranges themselves need; the background then reaches for what *one step back*
+needs — three months further still, because that window has its own
+comparison period — and carries on to the one-year retention limit from
+there. A step back within a second or two of first paint waits for that
+slice; after it lands, nothing within the year costs a fetch.
+
+When something does need fetching, the dashboard you were looking at stays
+on screen, dimmed, with a progress line. It never drops back to the key
+page — only a rejected key does that.
 
 ### Filtering and isolating
 
@@ -327,9 +332,11 @@ the mistakes worth not repeating.
 
 - **Only tested against one tenant's key.** The per-tenant path is structurally
   sound but unverified across tenants.
-- **The bisecting fetch has never fired in anger.** No 90-day window has been
-  large enough to trigger a truncation, so that branch is untested against a
-  real 404.
+- **The bisecting fetch has now fired in anger**, though only under
+  deliberate provocation: a 400-day window was forced through it, truncated
+  at the 200,000-row response cap, split, and came back whole. It has still
+  never triggered by itself, because a 15-day chunk of this tenant's traffic
+  is a fraction of that cap.
 - **`balanceUsed` is zero throughout** — it doesn't apply to gateway traffic,
   which bills against the caller's own provider credentials — so it isn't
   surfaced.

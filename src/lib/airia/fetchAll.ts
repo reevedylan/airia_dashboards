@@ -11,11 +11,34 @@ import { slim, type RawRow } from './aggregate'
  */
 
 const BASE = '/airia/api/marketplace/v1/AIOperationExecutions'
-const PAGE_LIMIT = 200_000       // a ceiling, not the real bound
+const PAGE_LIMIT = 200_000       // the real bound: a response is capped here
 const MIN_WINDOW_MS = 1000       // bisection floor
-const CHUNK_MS = 24 * 3_600_000
+
+/**
+ * How much time one request asks for.
+ *
+ * A day at a time was costing far more than it saved. Measured against a
+ * live tenant: throughput is ~12k rows/s whatever the window, so the only
+ * thing a small window adds is its own round trip — 184 of them to load six
+ * months, which is most of the nine seconds that took. The same span in
+ * 15-day chunks is a dozen requests.
+ *
+ * Fifteen rather than thirty: the server is not linear in window size, and
+ * thirty-day chunks measured SLOWER overall despite halving the request
+ * count. The ceiling is `PAGE_LIMIT` — a 365-day window came back with
+ * exactly 200,000 of 320,825 rows — and fifteen days is that limit at
+ * thirteen times this tenant's volume. Anything denser bisects, a path
+ * since exercised for real against a deliberately oversized window.
+ */
+const CHUNK_MS = 15 * 24 * 3_600_000
 const CONCURRENCY = 6            // gentler than the CLI's 8; a browser shares the tab
-export const BACKGROUND_CONCURRENCY = 2
+/**
+ * Background work runs at the same width as foreground work now. It was
+ * halved when a sweep meant hundreds of day-sized requests, which is what
+ * tripped the API's rate limiter; a year of history is a couple of dozen
+ * requests, and the limiter counts requests.
+ */
+export const BACKGROUND_CONCURRENCY = 6
 const REQ_TIMEOUT_MS = 120_000
 
 export class WindowTooLarge extends Error {}
@@ -111,22 +134,24 @@ export interface FetchOptions {
   onProgress?: (p: Progress) => void
   signal?: AbortSignal
   /**
-   * Parallel day-windows in flight. The default is what a foreground load
-   * uses; background backfill runs lower, because the API starts returning
-   * 403s under sustained parallel load and a slow backfill nobody is waiting
-   * for is better than a throttled one someone is.
+   * Parallel windows in flight. The default is what a foreground load uses;
+   * background backfill runs lower, because the API starts returning 403s
+   * under sustained parallel load and a slow backfill nobody is waiting for
+   * is better than a throttled one someone is.
    */
   concurrency?: number
+  /** Span per request. Overridden only to exercise the bisection path. */
+  chunkMs?: number
 }
 
 export async function fetchAll(
   key: string,
   from: number,
   to: number,
-  { onProgress, signal, concurrency = CONCURRENCY }: FetchOptions = {},
+  { onProgress, signal, concurrency = CONCURRENCY, chunkMs = CHUNK_MS }: FetchOptions = {},
 ): Promise<{ rows: RawRow[]; splits: number }> {
   const windows: Array<[number, number]> = []
-  for (let s = from; s < to; s += CHUNK_MS) windows.push([s, Math.min(s + CHUNK_MS, to)])
+  for (let s = from; s < to; s += chunkMs) windows.push([s, Math.min(s + chunkMs, to)])
 
   let splits = 0
   let done = 0
