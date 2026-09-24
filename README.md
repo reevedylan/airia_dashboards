@@ -35,6 +35,10 @@ Charts are hand-rolled SVG. There is no charting library.
 
 ![Gateway usage dashboard](docs/dashboard.png)
 
+**Walkthrough video:**
+
+[![Watch the walkthrough on YouTube](https://img.youtube.com/vi/eBOWguFukkU/hqdefault.jpg)](https://youtu.be/eBOWguFukkU)
+
 ## Quick start
 
 ```bash
