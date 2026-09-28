@@ -1,37 +1,15 @@
 # Airia gateway usage dashboard
 
-Paste an Airia API key and it builds itself: what the LLM gateway cost, who
-spent it, on which models, through which gateway.
-
-A key is scoped to one tenant, so a different key gives you that tenant's
-dashboard. That's the point — it's meant to be handed to a customer to run
-against their own data.
+Paste an Airia API key and the dashboard builds itself.
 
 ## The questions it answers in one look
+- **What are we spending?** Spend and consumption tracked over time, so you can see trend, not just a snapshot.
+- **Who or what is driving it?** Drill down by user, provider, model, or gateway to see where spend actually comes from.
+- **What are we paying for?** Spend broken out by input, output, write-cache, and read-cache — the categories that price differently.
+- **Was it always like this?** Analyse any window, from a single day to a full year.
+- **What does a slice look like on its own?** Filter to a specific user, department, or gateway and see that slice on its own.
 
-- **What are we spending, and is that up or down?** Spend, tokens and
-  executions, each against the equal period immediately before — so "$1,847,
-  up 371% on the previous three months", not a number with no context.
-- **What are we paying *for*?** Spend is split by billing category — write
-  cache, cached input, output, input — because they price very differently and
-  the mix is usually the story. On this tenant write-cache alone is the single
-  largest line item.
-- **Which model actually costs what?** A per-row rate card in real `$/M`,
-  computed *within* each token category. A blended rate ranks models by cache
-  hit rate rather than by price, and on real data it put the cheapest model
-  per token at the top as the most expensive.
-- **Who or what is driving it?** Break down by **model**, **user** or
-  **gateway**, with spend share, tokens in/out and the rate card on every row.
-- **Was it always like this?** Any window from one day to a year, and the
-  grain follows the span, so a day of traffic and a year of it are both
-  readable without choosing a bucket size.
-- **What does one slice look like on its own?** Filter to some users, or a
-  gateway, or both, and everything recomputes — tiles, charts, every
-  breakdown, and the comparison period. Click a row and it's drawn alone with
-  the scoped whole behind it in grey, on the same scale, so absolute size and
-  share read at once.
-
-Charts are hand-rolled SVG. There is no charting library.
+Charts are hand-rolled SVG
 
 ![Gateway usage dashboard](docs/dashboard.png)
 
@@ -53,9 +31,7 @@ For the built app: `npm run build && npm start` (http://localhost:4173).
 The Airia API sends no CORS headers, so a browser can't call it directly
 however valid your key. The page calls `/airia/…` on its **own** origin and
 something local forwards it — Vite's proxy in dev, `server.mjs` for the
-build. That makes this a local tool, not a link you can send, and it's why
-`server.mjs` binds to `127.0.0.1`: every request through the proxy carries
-the caller's key.
+build.
 
 Nothing is stored. Rows are fetched into the tab, aggregated in the browser
 and dropped when you close it; the key lives in memory unless you opt into
@@ -64,7 +40,7 @@ public and rows carry user emails, so nothing tenant-shaped touches disk.
 
 ## Stack
 
-React 19 + TypeScript + Vite. No charting, state or UI dependencies.
+React 19 + TypeScript + Vite.
 
 ```
 src/theme/      colour — the only place hex values exist
@@ -103,6 +79,4 @@ someone else's. Add `?tz=Europe/London` to look at a tenant's traffic in the
 zone their team works in. History is capped at Airia's 365-day log
 retention; nothing else needs configuring.
 
-**`CLAUDE.md` is the real documentation** — the data contract, the reducer
-table, the time-zone and daylight-saving rules, and the mistakes worth not
-repeating. Read it before changing anything.
+**`CLAUDE.md` is the real documentation** — Read it before changing anything.
