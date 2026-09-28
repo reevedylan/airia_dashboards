@@ -7,7 +7,7 @@ Paste an Airia API key and the dashboard builds itself.
 - **Who or what is driving it?** Drill down by user, provider, model, or gateway to see where spend actually comes from.
 - **What are we paying for?** Spend broken out by input, output, write-cache, and read-cache — the categories that price differently.
 - **Was it always like this?** Analyse any window, from a single day to a full year.
-- **What does a slice look like on its own?** Filter to a specific user, department, or gateway and see that slice on its own.
+- **What does a slice look like on its own?** Filter to a specific user, gateway, or both, and see that slice on its own.
 
 Charts are hand-rolled SVG
 
