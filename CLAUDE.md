@@ -388,11 +388,13 @@ the date button beside it was already naming.
 
 Two details worth keeping:
 
-- **Reserve the widest label.** `.viz-anchor__daylabel` has a floor width
-  per shape (a range is wider than a single day) because tabular numerals
-  fix the digits but not the letters, and "Sept" being a character longer
-  than "Mar" was enough to slide the filters. Verified: three steps back,
-  nothing moves by a pixel.
+- **Reserve the widest label.** `.viz-anchor__daylabel` stacks invisible
+  copies of the same-shaped label in all twelve months in one grid cell,
+  because tabular numerals fix the digits but not the letters, and "Sept"
+  being wider than "Mar" was enough to slide the filters. It used to be a
+  `min-width` in `ch`, which over-reserved — proportional month names are
+  narrower than that many zeros — and left a visible gap after the end
+  date. Verified: three steps back, nothing moves by a pixel.
 - **`--viz-seq-100` is not pale in dark mode.** It is the ramp's lightest
   step, which is near-white in light mode and a mid blue in dark, so
   filling a control with it swamps the dark toolbar. Tint a border, or use
@@ -638,7 +640,9 @@ segments is exactly the intended 2px.
 
 ## Cumulative views
 
-Both charts switch between daily bars and a cumulative line. Two rules:
+Both charts switch between per-period bars and a cumulative line. The
+toggle says "Breakdown", not "Daily": the grain runs from 15 minutes to 4
+days a bar, and the footer note names it. Two rules:
 
 - **Cumulative is always within the selected window.** `runningTotal()` runs
   over that range's own arrays, so it starts at zero and resets on every range

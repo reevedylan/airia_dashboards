@@ -7,7 +7,7 @@ import { runningTotal } from './data/airia'
  *
  * Both cards on the page are this. They were two ~85-line copies differing
  * only in their series and formatters, which is how the cumulative view
- * once kept showing all models after a click isolated one in the daily
+ * once kept showing all models after a click isolated one in the per-period
  * view — fixed in one copy, missed in the other.
  *
  * Everything it draws comes off `series` and the totals derived from it, so
@@ -19,7 +19,7 @@ import { runningTotal } from './data/airia'
  * which are.
  */
 
-export type ChartView = 'daily' | 'cumulative'
+export type ChartView = 'period' | 'cumulative'
 
 export interface ChartCardCategory {
   key: string
@@ -76,9 +76,9 @@ export function ChartCard({
   formatValue, formatTotal, formatTick, formatX, tableRows, note, from, to,
   activeSeries, onSeriesHover, loading, className,
 }: ChartCardProps) {
-  const daily = view === 'daily'
+  const perPeriod = view === 'period'
   const cumulative = runningTotal(totals)
-  const fmt = daily ? formatValue : formatTotal ?? formatValue
+  const fmt = perPeriod ? formatValue : formatTotal ?? formatValue
 
   /* A running total must be reduced with `max`, never `sum`: if buckets are
      ever merged for display, summing would add closing balances together.
@@ -86,8 +86,8 @@ export function ChartCard({
   const ghost = ghostTotals
     ? {
         label: ghostLabel ?? 'all',
-        values: daily ? ghostTotals : runningTotal(ghostTotals),
-        reducer: (daily ? 'sum' : 'max') as 'sum' | 'max',
+        values: perPeriod ? ghostTotals : runningTotal(ghostTotals),
+        reducer: (perPeriod ? 'sum' : 'max') as 'sum' | 'max',
       }
     : undefined
 
@@ -100,7 +100,7 @@ export function ChartCard({
       controls={<ViewToggle value={view} onChange={onView} />}
       /* Defined in both views — an empty array in the cumulative one — so
          the key row holds its height and the plot below it cannot shift. */
-      legend={daily ? series.map((s) => ({ label: s.label, color: s.color, shape: 'rect' as const })) : []}
+      legend={perPeriod ? series.map((s) => ({ label: s.label, color: s.color, shape: 'rect' as const })) : []}
       activeSeries={activeSeries}
       onSeriesHover={onSeriesHover}
       footer={
@@ -109,7 +109,7 @@ export function ChartCard({
           <p className="card-note" data-isolated={ghostTotals ? '' : undefined}>{note}</p>
         </>
       }
-      table={daily
+      table={perPeriod
         ? {
             columns: [{ key: 't', label: 'Time' }, ...series.map((s) => ({ key: s.key, label: cap(s.label), align: 'right' as const }))],
             rows: tableRows((i) => ({
@@ -130,7 +130,7 @@ export function ChartCard({
             })),
           }}
     >
-      {daily ? (
+      {perPeriod ? (
         <BarChart
           x={x}
           reducer="sum"
@@ -160,13 +160,14 @@ export function ChartCard({
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-/** Daily / Cumulative switch, shown in the card's header row. */
+/** Breakdown / Cumulative switch, shown in the card's header row. The grain
+    runs from 15 minutes to 4 days a bar, so the name must not promise one. */
 function ViewToggle({ value, onChange }: { value: ChartView; onChange: (v: ChartView) => void }) {
   return (
     <div className="viz-viewtoggle" role="group" aria-label="Chart view">
-      {(['daily', 'cumulative'] as const).map((v) => (
+      {(['period', 'cumulative'] as const).map((v) => (
         <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}>
-          {v === 'daily' ? 'Daily' : 'Cumulative'}
+          {v === 'period' ? 'Breakdown' : 'Cumulative'}
         </button>
       ))}
     </div>

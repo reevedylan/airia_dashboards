@@ -179,11 +179,15 @@ function AnchorBar({
         onClick={() => setOpen((v) => !v)}
       >
         <CalendarIcon />
-        {/* A range and a single day reserve different widths, each wide
-            enough for its longest form, so a month name growing from "Mar"
-            to "Sept" cannot nudge everything to its right. */}
-        <span className="viz-anchor__daylabel" data-range={win.from === win.to ? undefined : ''}>
-          {spanLabel(win.from, win.to)}
+        {/* The label shares a grid cell with invisible copies of the widest
+            labels of the same shape, so the button is exactly as wide as its
+            longest form in the real font: a month growing from "Mar" to
+            "Sept" cannot nudge the filters, and there is no slack either. */}
+        <span className="viz-anchor__daylabel">
+          <span>{spanLabel(win.from, win.to)}</span>
+          {widestLabels(win.from, win.to).map((s) => (
+            <span key={s} className="viz-anchor__sizer" aria-hidden="true">{s}</span>
+          ))}
         </span>
       </button>
 
@@ -240,6 +244,15 @@ function AnchorBar({
 const GUTTER = 8
 
 /** "22 Sept 2026", or "4 Mar – 3 Jun 2026" — the year said once. */
+const MONTHS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
+
+/** The same label shape — single day, one year, across years — in every
+    month. Digits are tabular, so only the month names change the width. */
+function widestLabels(from: string, to: string): string[] {
+  const y0 = from.slice(0, 4), y1 = to.slice(0, 4)
+  return MONTHS.map((m) => spanLabel(`${y0}-${m}-${from === to ? '28' : '27'}`, `${y1}-${m}-28`))
+}
+
 function spanLabel(from: string, to: string): string {
   if (from === to) return dayLabel(from)
   const start = from.slice(0, 4) === to.slice(0, 4)

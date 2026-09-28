@@ -42,8 +42,8 @@ const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users', g
 
 export default function App() {
   const [range, setRange] = useState<RangeKey>('3M')
-  const [tokenView, setTokenView] = useState<ChartView>('daily')
-  const [spendView, setSpendView] = useState<ChartView>('daily')
+  const [tokenView, setTokenView] = useState<ChartView>('period')
+  const [spendView, setSpendView] = useState<ChartView>('period')
   const [hovered, setHovered] = useState<string | null>(null)
   /** Empty means every user — a filter that excludes nothing, not everything. */
   const [userFilter, setUserFilter] = useState<Set<string>>(new Set())
@@ -396,7 +396,7 @@ export default function App() {
           formatTick={compact}
           formatX={labelAt}
           tableRows={rows}
-          note={isolationNote ?? (tokenView === 'daily' ? bucketNote : cumNote)}
+          note={isolationNote ?? (tokenView === 'period' ? bucketNote : cumNote)}
           from={from}
           to={to}
           activeSeries={hovered}
@@ -426,7 +426,7 @@ export default function App() {
           formatTick={(n) => `$${compact(n)}`}
           formatX={labelAt}
           tableRows={rows}
-          note={isolationNote ?? (spendView === 'daily' ? bucketNote : cumNote)}
+          note={isolationNote ?? (spendView === 'period' ? bucketNote : cumNote)}
           from={from}
           to={to}
           activeSeries={hovered}

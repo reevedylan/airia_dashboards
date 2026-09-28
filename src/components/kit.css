@@ -534,15 +534,19 @@
    that no preset is highlighted. */
 .viz-anchor__date[data-custom] { background: var(--viz-surface-active); color: var(--viz-focus); font-weight: 600; }
 .viz-anchor__date[data-custom]:hover { background: var(--viz-surface-hover); }
-/* Tabular figures and a floor width, so the toolbar does not twitch sideways
-   as the date changes under the chevrons. Tabular numerals fix the digits;
-   the floor widths cover the letters, since "Sept" is a character longer
-   than "Mar" and that was enough to slide the filters beside it. */
+/* Tabular figures and a reserved width, so the toolbar does not twitch
+   sideways as the date changes under the chevrons. Tabular numerals fix the
+   digits; stacked invisible sizers cover the letters, since "Sept" is wider
+   than "Mar" and that was enough to slide the filters beside it. A floor in
+   `ch` did the same job but over-reserved — a proportional month name is
+   narrower than that many zeros, which left a gap after the end date. */
 .viz-anchor__daylabel {
+  display: inline-grid;
   font-variant-numeric: tabular-nums;
-  min-width: 12ch; text-align: left; white-space: nowrap;
+  text-align: left; white-space: nowrap;
 }
-.viz-anchor__daylabel[data-range] { min-width: 21ch; }
+.viz-anchor__daylabel > * { grid-area: 1 / 1; }
+.viz-anchor__sizer { visibility: hidden; }
 
 .viz-anchor__pop {
   position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
