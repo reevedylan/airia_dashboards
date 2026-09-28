@@ -41,7 +41,7 @@ type Isolate = { dim: Dimension; key: string } | null
 const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users', gateway: 'gateways', provider: 'providers' }
 
 export default function App() {
-  const [range, setRange] = useState<RangeKey>('3M')
+  const [range, setRange] = useState<RangeKey>('7D')
   const [tokenView, setTokenView] = useState<ChartView>('cumulative')
   const [spendView, setSpendView] = useState<ChartView>('cumulative')
   const [hovered, setHovered] = useState<string | null>(null)
