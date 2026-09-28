@@ -4,6 +4,11 @@
 
 html, body, #root { height: 100%; }
 
+/* Reserve the scrollbar's width whether or not the page scrolls. The page is
+   centred, so a scrollbar appearing — the three-row provider table against
+   the longer gateway one — slid every component sideways by half its width. */
+html { scrollbar-gutter: stable; }
+
 body {
   margin: 0;
   background: var(--viz-page);

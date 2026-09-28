@@ -278,9 +278,10 @@ function splitCharges(charges: RawRow['additionalCharges'], seen: Set<string>) {
 
 /* ------------------------------------------------------------ fact table -- */
 
-/** Keyed by (bucket, user, model, gateway); `g` indexes `RangeBlock.gateways`. */
+/** Keyed by (bucket, user, model, gateway, provider); `g` indexes
+ *  `RangeBlock.gateways`, `p` indexes `RangeBlock.providers`. */
 export interface Facts {
-  b: number[]; u: number[]; m: number[]; g: number[]; ex: number[]
+  b: number[]; u: number[]; m: number[]; g: number[]; p: number[]; ex: number[]
   tIn: number[]; tCa: number[]; tOu: number[]
   cIn: number[]; cCa: number[]; cOu: number[]; cWr: number[]; cOt: number[]
 }
@@ -319,6 +320,10 @@ export interface RangeBlock {
   models: string[]
   /** Gateway configuration ids seen in this window, in first-seen order. */
   gateways: string[]
+  /** `providerType` values seen in this window, in first-seen order. A
+   *  column of its own rather than derived from the model name, because the
+   *  same model can be served by more than one provider (Bedrock, Azure). */
+  providers: string[]
   facts: Facts
   previous: PreviousWindow
 }
@@ -560,6 +565,7 @@ export function aggregate(
     users: new Map<string, number>(),
     models: new Map<string, number>(),
     gateways: new Map<string, number>(),
+    providers: new Map<string, number>(),
     // Keyed "user|gateway": every SCOPE, so a filtered window is compared
     // against a baseline filtered the same way.
     prev: new Map<string, { spend: bigint; tokens: number; ex: number }>(),
@@ -610,7 +616,7 @@ export function aggregate(
     else if (parts === reportedTotal) { reconciled++; legacyTotals++ }
     else mismatched++
 
-    const provider = row.providerType ?? '(unknown)'
+    const provider = (row.providerType ?? '').trim() || '(unknown)'
     providers[provider] = (providers[provider] ?? 0) + 1
 
     const model = row.modelName || '(unspecified)'
@@ -641,7 +647,8 @@ export function aggregate(
       if (!r.users.has(user)) r.users.set(user, r.users.size)
       if (!r.models.has(model)) r.models.set(model, r.models.size)
       if (!r.gateways.has(gateway)) r.gateways.set(gateway, r.gateways.size)
-      const fk = `${bi}|${r.users.get(user)}|${r.models.get(model)}|${r.gateways.get(gateway)}`
+      if (!r.providers.has(provider)) r.providers.set(provider, r.providers.size)
+      const fk = `${bi}|${r.users.get(user)}|${r.models.get(model)}|${r.gateways.get(gateway)}|${r.providers.get(provider)}`
       let f = r.facts.get(fk)
       if (!f) { f = emptyFact(); r.facts.set(fk, f) }
       f.tIn += tok.input; f.tCa += tok.cached; f.tOu += tok.output
@@ -654,10 +661,10 @@ export function aggregate(
 
   const out = {} as RangeMap
   for (const r of ranges) {
-    const c: Facts = { b: [], u: [], m: [], g: [], ex: [], tIn: [], tCa: [], tOu: [], cIn: [], cCa: [], cOu: [], cWr: [], cOt: [] }
+    const c: Facts = { b: [], u: [], m: [], g: [], p: [], ex: [], tIn: [], tCa: [], tOu: [], cIn: [], cCa: [], cOu: [], cWr: [], cOt: [] }
     for (const [fk, f] of r.facts) {
-      const [b, u, m, g] = fk.split('|').map(Number)
-      c.b.push(b); c.u.push(u); c.m.push(m); c.g.push(g); c.ex.push(f.ex)
+      const [b, u, m, g, pv] = fk.split('|').map(Number)
+      c.b.push(b); c.u.push(u); c.m.push(m); c.g.push(g); c.p.push(pv); c.ex.push(f.ex)
       c.tIn.push(f.tIn); c.tCa.push(f.tCa); c.tOu.push(f.tOu)
       c.cIn.push(fromScaled(f.cIn)); c.cCa.push(fromScaled(f.cCa)); c.cOu.push(fromScaled(f.cOu))
       c.cWr.push(fromScaled(f.cWr)); c.cOt.push(fromScaled(f.cOt))
@@ -674,6 +681,7 @@ export function aggregate(
       users: [...r.users.keys()],
       models: [...r.models.keys()],
       gateways: [...r.gateways.keys()],
+      providers: [...r.providers.keys()],
       facts: c,
       previous: (() => {
         // Sparse, like the facts: only the (user, gateway) pairs that occur.

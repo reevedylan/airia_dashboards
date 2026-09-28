@@ -1,9 +1,9 @@
 /**
  * Folding the fact table into what the page draws.
  *
- * One sparse table per range, keyed by (bucket, user, model, gateway), and
- * every number on the dashboard comes out of it here: the KPI tiles, both
- * charts, all three breakdowns and the period comparison. Pure — no React
+ * One sparse table per range, keyed by (bucket, user, model, gateway,
+ * provider), and every number on the dashboard comes out of it here: the KPI
+ * tiles, both charts, all four breakdowns and the period comparison. Pure — no React
  * beyond the two option-list hooks, no network, no dates.
  */
 
@@ -37,7 +37,7 @@ const zeros = (n: number) => new Array<number>(n).fill(0)
  * Two kinds of field, and the distinction is the one CLAUDE.md draws
  * between scoping and isolating. `users` and `gateways` are SCOPES: sets
  * that narrow everything on the page, and an empty one means "all", never
- * "none". `model`, `user` and `gateway` are single-value ISOLATES, a view
+ * "none". `model`, `user`, `gateway` and `provider` are single-value ISOLATES, a view
  * laid on top of whatever the scopes already chose.
  */
 export interface FactFilter {
@@ -48,6 +48,7 @@ export interface FactFilter {
   model?: string | null
   user?: string | null
   gateway?: string | null
+  provider?: string | null
 }
 
 /** The scopes alone — what recomputes the whole page, isolation aside. */
@@ -63,13 +64,14 @@ function admitted(labels: readonly string[], chosen?: ReadonlySet<string>): Set<
 }
 
 function predicate(block: RangeBlock, f: FactFilter): (i: number) => boolean {
-  const { model, user, gateway } = f
+  const { model, user, gateway, provider } = f
   // Resolve labels to dictionary indices once, rather than per fact.
   const okUser = admitted(block.users, f.users)
   const okGateway = admitted(block.gateways, f.gateways)
   const mi = model == null ? -1 : block.models.indexOf(model)
   const ui = user == null ? -1 : block.users.indexOf(user)
   const gi = gateway == null ? -1 : block.gateways.indexOf(gateway)
+  const pi = provider == null ? -1 : block.providers.indexOf(provider)
   const facts = block.facts
   return (i) => {
     if (okUser && !okUser.has(facts.u[i])) return false
@@ -77,6 +79,7 @@ function predicate(block: RangeBlock, f: FactFilter): (i: number) => boolean {
     if (model != null && facts.m[i] !== mi) return false
     if (user != null && facts.u[i] !== ui) return false
     if (gateway != null && facts.g[i] !== gi) return false
+    if (provider != null && facts.p[i] !== pi) return false
     return true
   }
 }
@@ -191,7 +194,7 @@ export function delta(now: number, before: number): Delta | null {
 
 /* --------------------------------------------------------- breakdowns -- */
 
-export type Dimension = 'model' | 'user' | 'gateway'
+export type Dimension = 'model' | 'user' | 'gateway' | 'provider'
 
 export interface BreakdownRow {
   key: string
@@ -218,9 +221,10 @@ export interface BreakdownRow {
 const axis = (block: RangeBlock, dim: Dimension) =>
   dim === 'model' ? { labels: block.models, idx: block.facts.m }
   : dim === 'user' ? { labels: block.users, idx: block.facts.u }
-  : { labels: block.gateways, idx: block.facts.g }
+  : dim === 'gateway' ? { labels: block.gateways, idx: block.facts.g }
+  : { labels: block.providers, idx: block.facts.p }
 
-/** Totals per model, user or gateway, within the current scopes. */
+/** Totals per model, user, gateway or provider, within the current scopes. */
 export function breakdown(block: RangeBlock, dim: Dimension, scope: Scope = {}): BreakdownRow[] {
   const f = block.facts
   const { labels, idx } = axis(block, dim)

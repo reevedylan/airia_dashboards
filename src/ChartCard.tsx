@@ -39,6 +39,9 @@ export interface ChartCardProps {
   x: readonly number[]
   /** Stack categories, in stack order, bottom first. */
   series: readonly ChartCardCategory[]
+  /** The cumulative line's colour. Defaults to the bottom category's, which
+   *  is an accident of stack order rather than a choice. */
+  lineColor?: string
   /** Per-bucket totals of the series ON SHOW — never an all-series summary,
    *  which is what made the cumulative line ignore isolation. */
   totals: number[]
@@ -72,7 +75,7 @@ export interface ChartCardProps {
 }
 
 export function ChartCard({
-  title, value, view, onView, x, series, totals, ghostTotals, ghostLabel,
+  title, value, view, onView, x, series, lineColor, totals, ghostTotals, ghostLabel,
   formatValue, formatTotal, formatTick, formatX, tableRows, note, from, to,
   activeSeries, onSeriesHover, loading, className,
 }: ChartCardProps) {
@@ -150,7 +153,7 @@ export function ChartCard({
           formatValue={fmt}
           formatX={formatX}
           formatTick={formatTick}
-          series={[{ key: 'total', label: 'cumulative', color: series[0]?.color ?? '', values: cumulative, reducer: 'max', area: true }]}
+          series={[{ key: 'total', label: 'cumulative', color: lineColor ?? series[0]?.color ?? '', values: cumulative, reducer: 'max', area: true }]}
           ghost={ghost}
         />
       )}

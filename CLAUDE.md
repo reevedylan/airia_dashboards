@@ -221,8 +221,8 @@ Verified by measuring the toggle's and plot's bounding boxes in both views at
 ## The fact table
 
 Each range ships ONE sparse fact table keyed by (bucket, user, model,
-gateway), and `src/data/airia.ts` folds everything out of it: the KPI tiles,
-both charts, and all three breakdowns.
+gateway, provider), and `src/data/airia.ts` folds everything out of it: the
+KPI tiles, both charts, and all four breakdowns.
 
 It has to work this way because the filters are real scopes, not highlights
 — filtering by gateway must recompute the *model* and *user* breakdowns too,
@@ -236,7 +236,11 @@ shipping every pre-aggregation would be.
 totals with shares. **Add a dimension by adding a column to the facts, not
 by adding another pre-aggregation** — `gatewayConfigurationId` was added
 exactly that way, and the whole change was a column, a dictionary, an
-`axis()` entry and a filter clause.
+`axis()` entry and a filter clause. `providerType` followed the same path. It is its
+own column rather than derived from the model name because one model can be
+served by several providers (Anthropic direct and Bedrock, say). Like model,
+provider is a view you can isolate, not a scope, so it stays out of
+`PreviousWindow`.
 
 Two things bite when adding one:
 

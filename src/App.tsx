@@ -38,12 +38,12 @@ const C = {
  *  render two ghost overlays at once. */
 type Isolate = { dim: Dimension; key: string } | null
 
-const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users', gateway: 'gateways' }
+const DIM_LABEL: Record<Dimension, string> = { model: 'models', user: 'users', gateway: 'gateways', provider: 'providers' }
 
 export default function App() {
   const [range, setRange] = useState<RangeKey>('3M')
-  const [tokenView, setTokenView] = useState<ChartView>('period')
-  const [spendView, setSpendView] = useState<ChartView>('period')
+  const [tokenView, setTokenView] = useState<ChartView>('cumulative')
+  const [spendView, setSpendView] = useState<ChartView>('cumulative')
   const [hovered, setHovered] = useState<string | null>(null)
   /** Empty means every user — a filter that excludes nothing, not everything. */
   const [userFilter, setUserFilter] = useState<Set<string>>(new Set())
@@ -94,6 +94,7 @@ export default function App() {
     model: block ? breakdown(block, 'model', scope) : [],
     user: block ? breakdown(block, 'user', scope) : [],
     gateway: block ? breakdown(block, 'gateway', scope) : [],
+    provider: block ? breakdown(block, 'provider', scope) : [],
   }), [block, scope])
 
   /* An isolation that no longer matches anything in scope is dropped rather
@@ -114,6 +115,7 @@ export default function App() {
       model: active.dim === 'model' ? active.key : undefined,
       user: active.dim === 'user' ? active.key : undefined,
       gateway: active.dim === 'gateway' ? active.key : undefined,
+      provider: active.dim === 'provider' ? active.key : undefined,
     })
   }, [block, scoped, active, scope])
 
@@ -379,33 +381,6 @@ export default function App() {
         <ChartCard
           className="grid__wide"
           loading={busy}
-          title="Tokens"
-          value={compact(shown.totals.tokens)}
-          view={tokenView}
-          onView={setTokenView}
-          x={x}
-          series={[
-            { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
-            { key: 'input', label: 'input', color: C.input, values: tokens.input },
-            { key: 'output', label: 'output', color: C.output, values: tokens.output },
-          ]}
-          totals={shown.tokenTotals}
-          ghostTotals={active ? scoped.tokenTotals : null}
-          ghostLabel={active ? `all ${DIM_LABEL[active.dim]}` : undefined}
-          formatValue={(n) => full(Math.round(n))}
-          formatTick={compact}
-          formatX={labelAt}
-          tableRows={rows}
-          note={isolationNote ?? (tokenView === 'period' ? bucketNote : cumNote)}
-          from={from}
-          to={to}
-          activeSeries={hovered}
-          onSeriesHover={setHovered}
-        />
-
-        <ChartCard
-          className="grid__wide"
-          loading={busy}
           title="Token spend"
           value={currency(shown.totals.cost)}
           view={spendView}
@@ -418,6 +393,7 @@ export default function App() {
             { key: 'input', label: 'input', color: C.input, values: cost.input },
             { key: 'other', label: 'other', color: C.other, values: cost.other },
           ]}
+          lineColor={C.total}
           totals={shown.paid}
           ghostTotals={active ? scoped.paid : null}
           ghostLabel={active ? `all ${DIM_LABEL[active.dim]}` : undefined}
@@ -433,7 +409,35 @@ export default function App() {
           onSeriesHover={setHovered}
         />
 
-        {/* One card, two dimensions. They share a column set and the same
+        <ChartCard
+          className="grid__wide"
+          loading={busy}
+          title="Tokens"
+          value={compact(shown.totals.tokens)}
+          view={tokenView}
+          onView={setTokenView}
+          x={x}
+          series={[
+            { key: 'cached', label: 'cached input', color: C.cached, values: tokens.cached },
+            { key: 'input', label: 'input', color: C.input, values: tokens.input },
+            { key: 'output', label: 'output', color: C.output, values: tokens.output },
+          ]}
+          lineColor={C.write}
+          totals={shown.tokenTotals}
+          ghostTotals={active ? scoped.tokenTotals : null}
+          ghostLabel={active ? `all ${DIM_LABEL[active.dim]}` : undefined}
+          formatValue={(n) => full(Math.round(n))}
+          formatTick={compact}
+          formatX={labelAt}
+          tableRows={rows}
+          note={isolationNote ?? (tokenView === 'period' ? bucketNote : cumNote)}
+          from={from}
+          to={to}
+          activeSeries={hovered}
+          onSeriesHover={setHovered}
+        />
+
+        {/* One card, four dimensions. They share a column set and the same
             isolate/ghost behaviour — only the grouping differs. */}
         <Card
           className="grid__full"
@@ -450,6 +454,7 @@ export default function App() {
                   { key: 'model', label: 'By model' },
                   { key: 'user', label: 'By user' },
                   ...(allGateways.length > 1 ? [{ key: 'gateway' as const, label: 'By gateway' }] : []),
+                  { key: 'provider', label: 'By provider' },
                 ]}
               />
               {active ? (
@@ -495,6 +500,7 @@ export default function App() {
                     ? ' A row showing a short id is a configuration that no longer exists — its traffic is still counted.'
                     : ' Names could not be loaded for this key, so each row shows the first block of its id.')
                 : ''}
+              {tab === 'provider' ? ' Grouped by the provider that served the call, so a Claude model reached through Bedrock counts under Bedrock rather than Anthropic.' : ''}
               {(userFilter.size > 0 || gatewayFilter.size > 0)
                 ? ' This list is scoped by the filters above too.'
                 : ''}
@@ -548,7 +554,7 @@ export default function App() {
   )
 }
 
-const DIM_HEADING: Record<Dimension, string> = { model: 'Model', user: 'User', gateway: 'Gateway' }
+const DIM_HEADING: Record<Dimension, string> = { model: 'Model', user: 'User', gateway: 'Gateway', provider: 'Provider' }
 
 /** A relative toggle: computing the next Set from a prop loses one of two
  *  toggles landing in the same render batch. */
