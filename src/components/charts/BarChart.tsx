@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useSize } from '../../lib/useSize'
 import { linearScale, niceDomain, ticks, bandScale, clamp, type Reducer } from '../../lib/scale'
 import { barPath } from '../../lib/path'
@@ -17,7 +17,7 @@ export interface BarSeries {
 export interface BarChartProps {
   /** Timestamps in ms, ascending, aligned with every series' `values`. */
   x: readonly number[]
-  /** One series draws plain columns; several stack, separated by a 2px gap. */
+  /** One series draws plain columns; several stack flush into one bar. */
   series: readonly BarSeries[]
   height?: number
   activeSeries?: string | null
@@ -58,6 +58,7 @@ export function BarChart({
   formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX, ghost,
 }: BarChartProps) {
   const [ref, size] = useSize<HTMLDivElement>()
+  const uid = useId()
   const [hover, setHover] = useState<number | null>(null)
   const w = size.width
 
@@ -117,36 +118,45 @@ export function BarChart({
     const band = bandScale(times.length, plotW, 2, 24)
     const ys = linearScale([y0, y1], [PAD.top + plotH, PAD.top])
     const baseline = ys(y0)
-    const gap = band.width > 4 ? 2 : 0
     const radius = Math.min(4, band.width / 2)
 
     /**
-     * Stack from the baseline up.
+     * Stack from the baseline up, as ONE bar.
+     *
+     * Segments sit flush, and the rounding belongs to the column, not to
+     * any segment: each column is clipped to a single rounded bar the
+     * height of the whole stack. An earlier version rounded every segment
+     * and cut a 2px surface gap between them, so a stack read as a pile of
+     * beads — the eye counted marks instead of reading one height. Rounding
+     * only the top SEGMENT is not enough either: a 2px cap clamps its
+     * radius to 2px and sits on the bar like a blob.
+     *
+     * Every boundary is placed on a whole pixel, from the RUNNING total
+     * rather than from each segment's own height. Neighbours then share an
+     * exact edge, so there is no anti-aliased seam between two colours, and
+     * rounding never accumulates up the stack: the top is always within
+     * half a pixel of the true total.
      *
      * A segment shorter than MIN_SEG_PX is not drawn at all. Forcing a
-     * minimum height on a negligible category turned it into a detached tick
-     * floating above the bar — its own surface gap pushed it clear of the
-     * stack, so a rounding-error value read as a mark of its own. Its value is
-     * still in the tooltip, which is where that detail belongs.
-     *
-     * The gap is likewise only carved out of segments comfortably larger than
-     * it; otherwise a small-but-real segment would detach the same way.
+     * minimum height on a negligible category turned it into a sliver that
+     * read as a mark of its own. Its value is still in the tooltip, which is
+     * where that detail belongs; skipping it moves nothing else, because the
+     * boundaries come from the running total.
      */
     const columns = times.map((_, i) => {
-      let cursor = baseline
-      let drawn = 0
+      let cum = 0
+      let below = Math.round(baseline)
       const segs = reduced.map((s) => {
         const v = Math.max(0, s.points[i] ?? 0)
-        const raw = baseline - ys(v)
-        const base = { key: s.key, label: s.label, color: s.color, value: v }
-        if (raw < MIN_SEG_PX) return { ...base, top: cursor, h: 0 }
-        const lead = drawn > 0 && reduced.length > 1 && raw > gap * 2 ? gap : 0
-        const top = cursor - raw
-        cursor = top
-        drawn += 1
-        return { ...base, top, h: raw - lead }
+        cum += v
+        const top = Math.round(ys(cum))
+        const h = below - top
+        const seg = { key: s.key, label: s.label, color: s.color, value: v, top, h: h < MIN_SEG_PX ? 0 : h }
+        if (seg.h > 0) below = top
+        return seg
       })
-      return { x: band.at(i), segs, ghost: ghostPoints ? baseline - ys(ghostPoints[i]) : 0 }
+      // The painted top: the outline every segment is clipped to.
+      return { x: band.at(i), segs, top: below, ghost: ghostPoints ? baseline - ys(ghostPoints[i]) : 0 }
     })
 
     return {
@@ -252,20 +262,31 @@ export function BarChart({
             ) : null}
 
             <g>
-              {model.columns.map((col, i) => (
-                <g key={i}>
+              {model.columns.map((col, i) => {
+                const base = Math.round(model.baseline)
+                if (col.top >= base) return null
+                const clip = `${uid}-bar${i}`
+                return (
+                <g key={i} clipPath={`url(#${clip})`}>
+                  <clipPath id={clip}>
+                    <path d={barPath(model.left + col.x, col.top, model.band.width, base - col.top, model.radius)} />
+                  </clipPath>
                   {col.segs.map((seg) =>
                     seg.h <= 0 ? null : (
-                      <path
+                      <rect
                         key={seg.key}
-                        d={barPath(model.left + col.x, seg.top, model.band.width, seg.h, model.radius)}
+                        x={model.left + col.x}
+                        y={seg.top}
+                        width={model.band.width}
+                        height={seg.h}
                         fill={seg.color}
                         opacity={activeSeries != null && activeSeries !== seg.label ? 0.22 : 1}
                       />
                     ),
                   )}
                 </g>
-              ))}
+                )
+              })}
             </g>
 
             <line

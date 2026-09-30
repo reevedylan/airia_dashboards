@@ -714,14 +714,32 @@ state — that ambiguity is why rows previously looked pre-selected.
 
 ## Stack segments
 
-`BarChart` **drops** a stack segment shorter than `MIN_SEG_PX` rather than
-drawing it. Forcing a minimum height on a negligible category turned it into a
-detached tick floating above the bar: its own 2px surface gap pushed it clear
-of the stack, so a rounding-error value read as a mark of its own. The gap is
-likewise only carved out of segments comfortably larger than it. Values that
-are too small to draw still appear in the tooltip, which is where that detail
-belongs — verified by asserting the largest gap between consecutive painted
-segments is exactly the intended 2px.
+A stacked column is drawn as ONE bar: segments flush, no gaps, and a single
+rounded top. Three things make that work, and each replaced something that
+looked broken:
+
+- **The rounding belongs to the column.** Each column's segments are plain
+  `rect`s clipped to one `barPath` the height of the whole stack. Rounding
+  every segment made a stack read as a pile of beads; rounding only the top
+  SEGMENT made a 2px cap clamp its radius to 2px and sit on the bar like a
+  blob. Clip ids come from `useId()`, for the same reason the area
+  gradients' do.
+- **No gap between colours.** There used to be a 2px surface gap cut out of
+  each segment. It separated the colours at the cost of the column: the eye
+  counted marks rather than reading one height.
+- **Boundaries on whole pixels, from the running total.** Each segment's top
+  is `round(ys(cumulative))`, so neighbours share an exact edge — no
+  anti-aliased seam — and rounding never accumulates: the top of the stack
+  is within half a pixel of the true total.
+
+`BarChart` still **drops** a segment shorter than `MIN_SEG_PX` rather than
+forcing it a minimum height, which turned a rounding-error value into a
+sliver that read as a mark of its own. Because boundaries come from the
+running total, skipping one moves nothing else. Values too small to draw
+still appear in the tooltip, which is where that detail belongs.
+
+Verified in the DOM across 131 columns on three ranges: zero gaps, zero
+overlaps, every edge on a whole pixel.
 
 ## Cumulative views
 
