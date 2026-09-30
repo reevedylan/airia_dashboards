@@ -541,6 +541,29 @@ comparison period. The backfill's FIRST slice goes straight there, and only
 then walks the rest of the year in 90-day slices. It is the click people
 actually make next.
 
+### ...but the first load covers the FIRST click itself
+
+Even with the prefetch, a click in the ~3 seconds before that first slice
+lands sat on "Updating…" for 2–3 s, while every later click was instant —
+which reads as "the first click is always slow". Every fold computes all
+five presets, so stepping 7D back a week needs 90D's comparison period a
+week further back: 187 days, where the first load fetched 180.
+
+So `useAiriaLive` takes `stepBack` — where the ‹ chevron would land — and
+the FIRST load alone reaches `earliestBoundary()` of that too. That is one
+step of the selected range (a week, on the 7D the page opens on), not the
+whole prefetch depth, and it costs no extra round trip because `fetchAll`
+now folds a sliver of a wave into the full ones: 187 days is twelve chunks
+of 15.6 days, not thirteen of 15, and the thirteenth would have been a
+whole third wave. It only does that while every chunk stays within a tenth
+of `CHUNK_MS`.
+
+Measured, before and after: first paint 7.9/6.1 s vs 7.3/6.7 s (noise),
+13 requests either way, first click straight after paint 3.2/2.2 s vs
+0.16 s. A SECOND click inside those first seconds still waits ~2.5 s — one
+request time, for the background slice — and reaching further up front is
+exactly the trade rejected below.
+
 It must stay in the background. Blocking the fold on that depth instead —
 tried, measured — means every step prefetches the step after it, and first
 paint went from 5.8s to 10.1s for nothing.

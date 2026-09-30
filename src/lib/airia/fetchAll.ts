@@ -150,8 +150,25 @@ export async function fetchAll(
   to: number,
   { onProgress, signal, concurrency = CONCURRENCY, chunkMs = CHUNK_MS }: FetchOptions = {},
 ): Promise<{ rows: RawRow[]; splits: number }> {
+  /*
+   * Don't send a wave for a sliver.
+   *
+   * Requests go out `concurrency` at a time, so a fetch costs about one
+   * request time per WAVE. A fixed chunk leaves the last wave nearly empty
+   * when the span is a little over a multiple: 187 days in 15-day chunks is
+   * thirteen requests, and the thirteenth is a whole third wave — about two
+   * seconds — for one week. Folding that sliver into the full waves gives
+   * twelve chunks of 15.6 days instead. Only when every chunk stays within
+   * a tenth of `chunkMs`, though: the server is not linear in window size,
+   * and thirty-day chunks measured slower than fifteen.
+   */
+  const span = Math.max(0, to - from)
+  let count = Math.max(1, Math.ceil(span / chunkMs))
+  const full = Math.floor(count / concurrency) * concurrency
+  if (full > 0 && full < count && span / full <= chunkMs * 1.1) count = full
+  const size = Math.ceil(span / count)
   const windows: Array<[number, number]> = []
-  for (let s = from; s < to; s += chunkMs) windows.push([s, Math.min(s + chunkMs, to)])
+  for (let s = from; s < to; s += size) windows.push([s, Math.min(s + size, to)])
 
   let splits = 0
   let done = 0

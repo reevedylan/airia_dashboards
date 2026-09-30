@@ -145,6 +145,12 @@ export function useAiriaLive(
   anchor: number | null,
   custom: DayRange | null = null,
   grain: GrainPick | null = null,
+  /**
+   * Where the window would END one step back — what the ‹ chevron would
+   * ask for next. Read only by the FIRST load, which reaches that far so
+   * the first click back is already cached; see below.
+   */
+  stepBack: number | null = null,
 ): LoadState {
   const [state, setState] = useState<LoadState>({ status: 'idle', data: null })
   const run = useRef(0)
@@ -162,6 +168,10 @@ export function useAiriaLive(
    *  matters: it decides whether cutting in front of it would help or
    *  would throw away the very rows being waited for. */
   const bg = useRef<{ ctrl: AbortController; from: number } | null>(null)
+  /* Through a ref, so a change of range does not re-run the effect: it only
+     ever matters to the first load, and a range change is a re-fold. */
+  const stepBackRef = useRef(stepBack)
+  stepBackRef.current = stepBack
 
   useEffect(() => {
     if (!key) {
@@ -248,16 +258,30 @@ export function useAiriaLive(
         if (!covered()) await exclusive(async () => {
           if (!live() || covered()) return
           if (!cache.current) {
+            /*
+             * Reach ONE STEP BACK further than this view needs.
+             *
+             * Every fold computes all five presets, so stepping 7D back a
+             * week needs 90D's comparison period a week further back too —
+             * 187 days, not 180. The background prefetch covers that, but it
+             * lands about three seconds after first paint, and a click inside
+             * that gap sat on "Updating…" for all of it while every later
+             * click was instant. A week more here is ~4% more rows and, with
+             * `fetchAll` folding the sliver into whole waves, no extra round
+             * trip. The next step's depth is still the background's job.
+             */
+            const firstFrom = stepBackRef.current == null ? needFrom
+              : Math.max(Math.min(needFrom, earliestBoundary(stepBackRef.current, ZONE, grains)), floor)
             show({ message: 'Checking the key…' })
-            expected = await probe(key, needFrom, wallNow)
+            expected = await probe(key, firstFrom, wallNow)
             if (!live()) return
             show({ message: 'Fetching executions…' })
-            const { rows } = await fetchAll(key, needFrom, wallNow, {
+            const { rows } = await fetchAll(key, firstFrom, wallNow, {
               onProgress: (p) => { if (live()) show({ message: 'Fetching executions…', progress: p }) },
               signal: ctrl.signal,
             })
             if (!live()) return
-            cache.current = { key, rows, from: needFrom, to: wallNow }
+            cache.current = { key, rows, from: firstFrom, to: wallNow }
           } else if (needFrom < cache.current.from) {
             // Stepped back past what is cached: fetch only the missing older
             // slice and prepend it, rather than refetching the whole span.

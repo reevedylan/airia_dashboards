@@ -81,7 +81,11 @@ export default function App() {
   const grainFold: GrainPick | null = grain === native ? null : { window: custom ? 'custom' : range, bucketMs: grain }
 
   const { key, setKey, clear, remember } = useApiKey()
-  const load = useAiriaLive(key, anchor, custom, grainFold)
+  /* One step back is the likeliest next click; the first load reaches that
+     far so it is already cached. A drawn range steps by its own span and is
+     never what the page opens on, so it passes nothing. */
+  const stepBack = custom ? null : stepWindow(range, anchor, -1)
+  const load = useAiriaLive(key, anchor, custom, grainFold, stepBack)
   /* The last good fold, HELD while the next one loads. Reading it only when
      the status is 'ready' is what used to drop the page back to the key gate
      mid-session, the moment an anchor reached past the cached rows. */
