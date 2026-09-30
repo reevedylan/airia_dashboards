@@ -488,7 +488,12 @@
 }
 .viz-drop__label > * { grid-area: 1 / 1; }
 .viz-drop__sizer { visibility: hidden; }
-.viz-msel__summary { display: block; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
+/* Clips for the ellipsis, so it needs a line box taller than the glyphs:
+   at the trigger's line-height of 1 the descender of "g" was cut off. */
+.viz-msel__summary {
+  display: block; max-width: 22ch; overflow: hidden; text-overflow: ellipsis;
+  line-height: 1.3;
+}
 
 /* A short single-choice menu: heading, items, a check on the chosen one. */
 .viz-menu {
