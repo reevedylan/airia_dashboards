@@ -19,36 +19,10 @@
   gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
 }
 .viz-toolbar__controls {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 6px 18px; flex-wrap: wrap;
   flex: 1 1 auto; min-width: 0;
 }
 .viz-toolbar__actions { display: flex; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
-
-/* Every control on the toolbar row is --viz-ctl-h tall. Sizing each from its
-   own padding is what left the anchor 15px shorter than the range buttons
-   beside it. A shell that pads 3px around its buttons gets the inner height,
-   so both kinds of control end up on the same outline. */
-.viz-segmented {
-  display: inline-flex; align-items: stretch;
-  height: var(--viz-ctl-h);
-  background: var(--viz-surface);
-  border: 1px solid var(--viz-border);
-  border-radius: var(--viz-radius-ctl);
-  padding: 3px; gap: 2px;
-}
-.viz-segmented__btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: var(--viz-ctl-inner-h);
-  font: 500 13px/1 var(--viz-font);
-  color: var(--viz-text-secondary);
-  background: none; border: 0; cursor: pointer;
-  padding: 0 13px; border-radius: 6px;
-  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
-}
-.viz-segmented__btn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
-.viz-segmented__btn[aria-pressed='true'] {
-  background: var(--viz-seq-100); color: var(--viz-seq-700); font-weight: 600;
-}
 
 .viz-btn {
   display: inline-flex; align-items: center; gap: 8px;
@@ -77,8 +51,9 @@
 .viz-iconbtn:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
 .viz-iconbtn[aria-pressed='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
 
-:where(.viz-btn, .viz-iconbtn, .viz-segmented__btn, .viz-showall, .viz-legend__item,
-        .viz-anchor__step, .viz-anchor__date, .viz-anchor__now, .viz-cal__nav):focus-visible,
+:where(.viz-btn, .viz-iconbtn, .viz-drop, .viz-showall, .viz-legend__item,
+        .viz-anchor__step, .viz-cal__nav, .viz-menu__item, .viz-tp__range,
+        .viz-tp__apply, .viz-tp__calbtn, .viz-tp__x):focus-visible,
 .viz-plot svg:focus-visible,
 .viz-tableview:focus-visible {
   outline: 2px solid var(--viz-focus); outline-offset: 2px;
@@ -332,7 +307,7 @@
 }
 .card-note[data-isolated] { color: var(--viz-text-secondary); }
 
-/* In-card view switch (daily / cumulative). Smaller sibling of .viz-segmented. */
+/* In-card view switch (breakdown / cumulative). */
 .viz-viewtoggle {
   display: inline-flex; gap: 2px; padding: 2px;
   background: var(--viz-surface-sunken);
@@ -401,18 +376,6 @@
 /* --- multi-select with search ------------------------------------------- */
 
 .viz-msel { position: relative; }
-.viz-msel__trigger { gap: 8px; }
-.viz-msel__label { color: var(--viz-text-muted); }
-.viz-msel__summary {
-  color: var(--viz-text-primary); font-weight: 600;
-  max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.viz-msel__trigger[data-active] {
-  border-color: var(--viz-focus);
-  background: var(--viz-seq-100);
-}
-.viz-msel__trigger[data-active] :where(.viz-msel__label, .viz-msel__summary) { color: var(--viz-seq-700); }
-
 .viz-msel__pop {
   position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
   width: 290px;
@@ -494,91 +457,204 @@
 .viz-rank thead th[aria-sort] button { color: var(--viz-text-primary); font-weight: 600; }
 .viz-rank__caret { font-size: 9px; line-height: 1; }
 
-/* --- window anchor (position, not duration) ------------------------------ */
+/* --- toolbar dropdowns ---------------------------------------------------- */
 
-/* Same shell as .viz-segmented — same height, padding, radius and border —
-   so the two controls read as one row. They are siblings in meaning too:
-   one picks how long the window is, the other where it ends. */
-.viz-anchor {
-  position: relative;
-  display: inline-flex; align-items: stretch; gap: 2px; padding: 3px;
+/* Text and a chevron, no box, until reached for. Every trigger is exactly
+   --viz-ctl-h tall so the row keeps one baseline beside the boxed actions. */
+.viz-dropwrap { position: relative; }
+.viz-drop {
+  display: inline-flex; align-items: center; gap: 8px;
   height: var(--viz-ctl-h);
-  background: var(--viz-surface);
+  padding: 0 10px; margin: 0 -2px;
+  font: 500 14px/1 var(--viz-font);
+  color: var(--viz-text-secondary);
+  background: none; border: 0; border-radius: var(--viz-radius-ctl); cursor: pointer;
+  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+}
+.viz-drop:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+.viz-drop[aria-expanded='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
+.viz-drop__chev { color: var(--viz-text-muted); flex-shrink: 0; transition: transform var(--viz-dur-fast) var(--viz-ease); }
+.viz-drop[aria-expanded='true'] .viz-drop__chev { transform: rotate(180deg); }
+/* A filter narrowing the data, or a window that no longer ends now. Ink,
+   not fill: the ramp's lightest step is a mid blue in dark mode. */
+.viz-drop[data-active] { color: var(--viz-focus); }
+.viz-drop[data-active] .viz-drop__chev { color: var(--viz-focus); }
+
+/* The visible label shares one grid cell with invisible copies of every
+   label the trigger can show, so it is always exactly its widest form. */
+.viz-drop__label {
+  display: inline-grid; text-align: left; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.viz-drop__label > * { grid-area: 1 / 1; }
+.viz-drop__sizer { visibility: hidden; }
+.viz-msel__summary { display: block; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
+
+/* A short single-choice menu: heading, items, a check on the chosen one. */
+.viz-menu {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
+  min-width: 210px;
+  background: var(--viz-surface-raised);
   border: 1px solid var(--viz-border);
   border-radius: var(--viz-radius-ctl);
+  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
+  padding: 6px;
+}
+.viz-menu__head {
+  margin: 0; padding: 8px 10px 6px;
+  font: 500 12px/1 var(--viz-font); color: var(--viz-text-muted);
+}
+.viz-menu__item {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  width: 100%; padding: 9px 10px;
+  font: 400 14px/1.2 var(--viz-font); color: var(--viz-text-primary);
+  background: none; border: 0; border-radius: 6px; cursor: pointer; text-align: left;
+}
+.viz-menu__item:hover { background: var(--viz-surface-hover); }
+.viz-menu__item[aria-selected='true'] { background: var(--viz-surface-active); font-weight: 500; }
+.viz-menu__hint { margin-left: 8px; font-size: 12px; color: var(--viz-text-muted); font-weight: 400; }
+.viz-menu__check { color: var(--viz-text-muted); flex-shrink: 0; }
+
+/* The multi-select keeps its own panel (search, list, bulk actions) and
+   takes the menu's heading above the search. */
+.viz-msel__pop .viz-menu__head { padding: 12px 13px 2px; }
+
+/* --- pager: where the window sits ------------------------------------------ */
+
+.viz-pager {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: var(--viz-ctl-h);
 }
 .viz-anchor__step {
   display: inline-grid; place-items: center;
-  width: 30px; height: var(--viz-ctl-inner-h);
+  width: 28px; height: 28px;
   border: 0; border-radius: 6px; cursor: pointer;
-  color: var(--viz-text-secondary); background: none;
+  color: var(--viz-text-muted); background: none;
   transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
 }
 .viz-anchor__step:hover:not(:disabled) { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
-.viz-anchor__step:disabled { opacity: 0.3; cursor: default; }
-
-.viz-anchor__date {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: var(--viz-ctl-inner-h);
-  padding: 0 11px; border: 0; border-radius: 6px; cursor: pointer;
-  background: none; color: var(--viz-text-secondary);
-  font: 500 13px/1 var(--viz-font);
-  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+.viz-anchor__step:disabled { opacity: 0.35; cursor: default; }
+.viz-pager__label {
+  display: inline-grid; padding: 0 4px;
+  font: 400 13px/1 var(--viz-font); color: var(--viz-text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; text-align: center;
 }
-.viz-anchor__date:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
-.viz-anchor__date[aria-expanded='true'] { background: var(--viz-surface-active); color: var(--viz-text-primary); }
-/* A drawn range is not one of the presets, so the control says so — but
-   quietly. The ramp's lightest step is pale in light mode and a mid blue in
-   dark, so a filled button swamped the toolbar there; a neutral surface with
-   focus-coloured text reads the same in both. The loud half of the signal is
-   that no preset is highlighted. */
-.viz-anchor__date[data-custom] { background: var(--viz-surface-active); color: var(--viz-focus); font-weight: 600; }
-.viz-anchor__date[data-custom]:hover { background: var(--viz-surface-hover); }
-/* Tabular figures and a reserved width, so the toolbar does not twitch
-   sideways as the date changes under the chevrons. Tabular numerals fix the
-   digits; stacked invisible sizers cover the letters, since "Sept" is wider
-   than "Mar" and that was enough to slide the filters beside it. A floor in
-   `ch` did the same job but over-reserved — a proportional month name is
-   narrower than that many zeros, which left a gap after the end date. */
-.viz-anchor__daylabel {
-  display: inline-grid;
+.viz-pager__label > * { grid-area: 1 / 1; }
+.viz-pager[data-past] .viz-pager__label { color: var(--viz-text-primary); }
+
+/* --- time picker ------------------------------------------------------------ */
+
+/* Main panel, and the calendar beside it when asked for — two panels, the
+   way Grafana lays it out. Side by side while they fit; stacked on a
+   narrow screen, where the calendar goes on top. */
+.viz-time__pop { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; }
+.viz-tp {
+  display: flex; align-items: flex-start; gap: 6px;
+  max-width: calc(100vw - 16px);
+}
+.viz-tp__main, .viz-tp__cal {
+  background: var(--viz-surface-raised);
+  border: 1px solid var(--viz-border);
+  border-radius: var(--viz-radius-ctl);
+  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.1);
+}
+.viz-tp__main { width: 560px; max-width: 100%; display: flex; flex-direction: column; }
+.viz-tp__panes { display: grid; grid-template-columns: 1fr 200px; }
+.viz-tp__abs { padding: 16px 18px; min-width: 0; }
+.viz-tp__quick {
+  border-left: 1px solid var(--viz-border);
+  padding: 12px 8px; max-height: 360px; overflow-y: auto;
+}
+.viz-tp__title { margin: 0 0 12px; font: 600 14px/1.2 var(--viz-font); color: var(--viz-text-primary); }
+.viz-tp__title--sub { margin: 20px 0 6px; font-size: 13px; }
+
+.viz-tp__field { margin-bottom: 12px; }
+.viz-tp__label {
+  display: flex; flex-direction: column; gap: 6px;
+  font: 500 12px/1 var(--viz-font); color: var(--viz-text-secondary);
+}
+.viz-tp__input {
+  display: flex; align-items: stretch;
+  border: 1px solid var(--viz-border); border-radius: 6px; overflow: hidden;
+  background: var(--viz-surface-sunken);
+}
+.viz-tp__input:focus-within { border-color: var(--viz-focus); }
+.viz-tp__input[data-error] { border-color: var(--viz-status-critical); }
+.viz-tp__input input {
+  flex: 1; min-width: 0; padding: 9px 10px;
+  font: 400 13.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--viz-text-primary); background: none; border: 0; outline: none;
+}
+.viz-tp__calbtn {
+  display: grid; place-items: center; width: 38px;
+  color: var(--viz-text-secondary); background: var(--viz-surface-hover);
+  border: 0; border-left: 1px solid var(--viz-border); cursor: pointer;
+}
+.viz-tp__calbtn:hover, .viz-tp__calbtn[aria-pressed='true'] { color: var(--viz-text-primary); background: var(--viz-surface-active); }
+/* Errors always carry text, so the colour is never the only signal. */
+.viz-tp__error { margin: 6px 0 0; font: 400 11.5px/1.4 var(--viz-font); color: var(--viz-status-critical); }
+
+.viz-tp__apply {
+  margin-top: 4px; padding: 10px 14px;
+  font: 600 13px/1 var(--viz-font); color: var(--viz-page);
+  background: var(--viz-focus); border: 0; border-radius: 6px; cursor: pointer;
+}
+.viz-tp__apply:hover:not(:disabled) { background: var(--viz-seq-600); }
+.viz-tp__apply:disabled { opacity: 0.45; cursor: default; }
+
+.viz-tp__recent { list-style: none; margin: 0; padding: 0; }
+.viz-tp__range {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 8px 10px;
+  font: 400 13.5px/1.3 var(--viz-font); color: var(--viz-text-primary);
   font-variant-numeric: tabular-nums;
-  text-align: left; white-space: nowrap;
+  background: none; border: 0; border-radius: 6px; cursor: pointer; text-align: left;
 }
-.viz-anchor__daylabel > * { grid-area: 1 / 1; }
-.viz-anchor__sizer { visibility: hidden; }
+.viz-tp__abs .viz-tp__range { margin: 0 -10px; width: calc(100% + 20px); }
+.viz-tp__range:hover { background: var(--viz-surface-hover); }
+.viz-tp__quickitem[aria-selected='true'] { background: var(--viz-surface-active); font-weight: 500; }
 
-.viz-anchor__pop {
-  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
+.viz-tp__search {
+  display: flex; align-items: center; gap: 7px; margin: 0 2px 8px;
+  padding: 0 9px; color: var(--viz-text-muted);
+  border: 1px solid var(--viz-border); border-radius: 6px; background: var(--viz-surface-sunken);
 }
-
-/* "Now" lives inside the control, always, so the group's width does not
-   change with the state of the window. Disabled rather than hidden: a
-   control that comes and goes re-lays-out everything beside it.
-
-   Filled with --viz-focus and inked with --viz-page, the pair that inverts
-   correctly in both modes — pale ink on a strong fill in light, dark ink on
-   a bright fill in dark. */
-.viz-anchor__now {
-  display: inline-flex; align-items: center;
-  height: var(--viz-ctl-inner-h);
-  padding: 0 11px; margin-left: 2px;
-  border: 0; border-radius: 6px; cursor: pointer;
-  background: var(--viz-focus); color: var(--viz-page);
-  font: 600 12px/1 var(--viz-font);
-  transition: background var(--viz-dur-fast) var(--viz-ease), color var(--viz-dur-fast) var(--viz-ease);
+.viz-tp__search:focus-within { border-color: var(--viz-focus); }
+.viz-tp__search input {
+  flex: 1; min-width: 0; padding: 8px 0;
+  font: 400 13px/1 var(--viz-font); color: var(--viz-text-primary);
+  background: none; border: 0; outline: none;
 }
-.viz-anchor__now:hover:not(:disabled) { background: var(--viz-seq-600); }
-.viz-anchor__now:disabled {
-  background: none; color: var(--viz-text-muted); opacity: 0.5; cursor: default;
-}
+.viz-tp__search input::placeholder { color: var(--viz-text-muted); }
+.viz-tp__empty { margin: 0; padding: 10px; font: 400 12.5px/1 var(--viz-font); color: var(--viz-text-muted); }
 
-/* Off the live window. A tinted BORDER rather than a filled control: the
-   sequential ramp's lightest step is pale in light mode but a mid blue in
-   dark, so filling the group swamped the toolbar there. The enabled "Now"
-   button beside it carries the rest of the signal. */
-.viz-anchor[data-past] { border-color: var(--viz-focus); }
-.viz-anchor[data-past] .viz-anchor__date { color: var(--viz-text-primary); }
+.viz-tp__foot {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 11px 18px; border-top: 1px solid var(--viz-border);
+  font: 400 12px/1.3 var(--viz-font); color: var(--viz-text-muted);
+}
+.viz-tp__foot strong { color: var(--viz-text-secondary); font-weight: 600; margin-right: 6px; }
+.viz-tp__offset { font-variant-numeric: tabular-nums; }
+
+.viz-tp__cal { padding: 10px; }
+.viz-tp__calhead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 2px 8px; font: 600 13px/1 var(--viz-font); color: var(--viz-text-primary);
+}
+.viz-tp__x {
+  display: grid; place-items: center; width: 24px; height: 24px;
+  color: var(--viz-text-muted); background: none; border: 0; border-radius: 6px; cursor: pointer;
+}
+.viz-tp__x:hover { background: var(--viz-surface-hover); color: var(--viz-text-primary); }
+/* The calendar brings its own panel; inside ours it is just the grid. */
+.viz-tp__cal .viz-cal { border: 0; box-shadow: none; padding: 0; background: none; }
+
+@media (max-width: 720px) {
+  .viz-tp { flex-direction: column; align-items: stretch; width: min(560px, calc(100vw - 16px)); }
+  .viz-tp__main { width: auto; }
+  .viz-tp__panes { grid-template-columns: 1fr; }
+  .viz-tp__quick { border-left: 0; border-top: 1px solid var(--viz-border); max-height: 220px; }
+}
 
 /* --- calendar ------------------------------------------------------------ */
 

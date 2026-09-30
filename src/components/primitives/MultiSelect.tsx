@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { DropTrigger } from './Dropdown'
+import { usePopover } from './popover'
 
 export interface MultiSelectProps {
+  /** Heading inside the popover, e.g. "Filter users". Also its accessible name. */
   label: string
+  /** Plural noun for the trigger once several are picked: "3 users". */
+  noun?: string
   options: readonly string[]
   /** Empty means "all" — the filter is inert rather than excluding everything. */
   selected: ReadonlySet<string>
@@ -28,9 +33,6 @@ export interface MultiSelectProps {
    */
   optionText?: (value: string) => string
   placeholder?: string
-  /** Glyph on the trigger. Two filters side by side need telling apart at a
-   *  glance, before either label is read. */
-  icon?: React.ReactNode
 }
 
 /**
@@ -45,29 +47,12 @@ export interface MultiSelectProps {
  */
 export function MultiSelect({
   label, options, selected, onToggle, onChange,
-  allLabel = 'All', renderOption, optionText, placeholder = 'Search…', icon,
+  allLabel = 'All', renderOption, optionText, placeholder = 'Search…', noun = 'selected',
 }: MultiSelectProps) {
   const text = optionText ?? ((v: string) => v)
-  const [open, setOpen] = useState(false)
+  const { open, setOpen, root, trigger, pop } = usePopover()
   const [query, setQuery] = useState('')
-  const root = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
-
-  // Close on outside click or Escape — a popover that traps the page is worse
-  // than no popover.
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    document.addEventListener('pointerdown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
 
   useEffect(() => { if (open) search.current?.focus() }, [open])
 
@@ -82,26 +67,24 @@ export function MultiSelect({
     ? allLabel
     : selected.size === 1
       ? text([...selected][0])
-      : `${selected.size} selected`
+      : `${selected.size} ${noun}`
 
   return (
-    <div className="viz-msel" ref={root}>
-      <button
-        type="button"
-        className="viz-btn viz-msel__trigger"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        data-active={selected.size > 0 ? '' : undefined}
+    <div className="viz-dropwrap viz-msel" ref={root}>
+      <DropTrigger
+        ref={trigger}
+        className="viz-msel__trigger"
+        label={<span className="viz-msel__summary">{summary}</span>}
+        open={open}
+        active={selected.size > 0}
+        ariaLabel={`${label}: ${summary}`}
+        title={selected.size > 1 ? [...selected].map(text).join(', ') : undefined}
         onClick={() => setOpen((v) => !v)}
-      >
-        {icon ?? <UserIcon />}
-        <span className="viz-msel__label">{label}</span>
-        <span className="viz-msel__summary">{summary}</span>
-        <ChevronIcon />
-      </button>
+      />
 
       {open ? (
-        <div className="viz-msel__pop" role="dialog" aria-label={label}>
+        <div className="viz-msel__pop" role="dialog" aria-label={label} ref={pop}>
+          <p className="viz-menu__head">{label}</p>
           <input
             ref={search}
             className="viz-msel__search"
@@ -157,19 +140,6 @@ export function MultiSelect({
     </div>
   )
 }
-
-const UserIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
-    <circle cx="8" cy="5.5" r="2.75" />
-    <path d="M2.75 14c0-2.9 2.35-4.5 5.25-4.5s5.25 1.6 5.25 4.5" />
-  </svg>
-)
-
-const ChevronIcon = () => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M4 6.5l4 4 4-4" />
-  </svg>
-)
 
 const CheckIcon = () => (
   <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

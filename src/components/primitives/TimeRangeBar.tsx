@@ -1,94 +1,156 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Calendar, dayLabel } from './Calendar'
+import { dayLabel } from './Calendar'
+import { DropTrigger, SelectMenu, type SelectMenuOption } from './Dropdown'
+import { TimePicker, type QuickRange } from './TimePicker'
+import { usePopover } from './popover'
+import type { Day } from '../../lib/day'
 
-export const RANGES = ['24H', '7D', '14D', '1M', '3M'] as const
+export const RANGES = ['24H', '7D', '14D', '30D', '90D'] as const
 export type RangeKey = (typeof RANGES)[number]
+
+/** What each preset is called in the picker and on its trigger. */
+export const RANGE_LABELS: Record<RangeKey, string> = {
+  '24H': 'Last 24 hours',
+  '7D': 'Last 7 days',
+  '14D': 'Last 14 days',
+  '30D': 'Last 30 days',
+  '90D': 'Last 90 days',
+}
+
+/** The duration alone — for a window that no longer ends now, and for
+ *  "vs previous 7 days". */
+export const RANGE_SPANS: Record<RangeKey, string> = {
+  '24H': '24 hours',
+  '7D': '7 days',
+  '14D': '14 days',
+  '30D': '30 days',
+  '90D': '90 days',
+}
+
+const QUICK: readonly QuickRange<RangeKey>[] = RANGES.map((r) => ({
+  key: r,
+  label: RANGE_LABELS[r],
+  from: r === '24H' ? 'now-24h' : `now-${r.slice(0, -1)}d`,
+}))
 
 export interface AnchorControls {
   /** Step the window back or forward by its own length. */
   onStep: (direction: -1 | 1) => void
-  /**
-   * A custom range, from the calendar. Both ends are civil DAYS, resolved
-   * low-to-high whichever order they were clicked; the caller turns them
-   * into instants, because only it knows the zone the buckets were aligned
-   * to. Choosing one leaves preset mode.
-   */
-  onSelectRange: (from: string, to: string) => void
-  /** Return to the live window of the selected preset. */
-  onNow: () => void
   /** True when the window already ends at the wall clock. */
   atNow: boolean
   /** True when the window already reaches the oldest retained data. */
   atOldest?: boolean
-  /** The window on screen, as civil days: banded in the calendar, and named
-   *  on the button. */
+  /** The window on screen, as civil days, named on the pager. */
   window: { from: string; to: string }
-  /** Earliest and latest selectable days, and the longest span. */
-  maxDay?: string
-  minDay?: string
-  maxSpanDays?: number
-  /** One line under the calendar grid, when no selection is in progress. */
-  note?: React.ReactNode
-  /** True when the window came from the calendar rather than a preset. */
+  /** True when the window came from the picker's absolute range. */
   custom?: boolean
+}
+
+export interface PickerControls {
+  /** An absolute range: both ends are civil days, resolved low-to-high.
+   *  The caller turns them into instants — only it knows the zone. */
+  onApply: (from: Day, to: Day) => void
+  recent: readonly { from: Day; to: Day }[]
+  today: Day
+  minDay: Day
+  maxSpanDays: number
+  zone: string
+  offset: string
+}
+
+export interface GrainControls {
+  value: number
+  options: readonly SelectMenuOption<number>[]
+  onChange: (next: number) => void
 }
 
 export interface TimeRangeBarProps {
   /** The active preset, or null when a custom range is showing: the two are
-   *  mutually exclusive, so nothing is pressed in custom mode. */
+   *  mutually exclusive. */
   value: RangeKey | null
   onChange: (next: RangeKey) => void
-  /** Moves the window in time without changing its duration. */
-  anchor?: AnchorControls
-  /** Scope controls, beside the range tabs — they belong together because
-   *  both narrow the same data for everything below. */
+  anchor: AnchorControls
+  picker: PickerControls
+  grain?: GrainControls
+  /** Scope controls, first in the row: they narrow the data for everything
+   *  below, before the window says which part of it. */
   filters?: React.ReactNode
   /** Rendered on the right — e.g. a theme toggle. */
   actions?: React.ReactNode
 }
 
-/**
- * One range row, above everything it scopes. Every card below re-renders
- * against the same range, so the numbers always agree.
- *
- * Duration and anchor are separate controls. The buttons pick how long a
- * window is; the chevrons and the calendar pick where it ends. Folding both
- * into one control is what makes most range pickers awkward — and a
- * two-ended date picker would make the bucket size depend on how wide a span
- * you happened to drag.
- */
-export function TimeRangeBar({ value, onChange, anchor, filters, actions }: TimeRangeBarProps) {
-  return (
-    /*
-      Two zones, not one wrapping row.
-      ------------------------------------------------------------------
-      Everything used to sit in a single `flex-wrap` row with the actions
-      pushed right by `margin-left: auto`, which meant any control that
-      appeared could shove them onto a line of their own. It did: adding
-      the gateway filter used up the slack, and the off-live chip tipped it
-      over, so stepping the window back re-laid-out the whole toolbar.
+/** Every label the time trigger can show, so its width never changes. */
+const TIME_SIZERS = [...Object.values(RANGE_LABELS), ...Object.values(RANGE_SPANS), 'Custom range']
 
-      The controls now wrap among THEMSELVES and the actions keep the right
-      edge, so what changes on the left cannot move what is on the right.
-    */
+/**
+ * The toolbar: scope, window, grain, and where the window sits.
+ *
+ *   All users ∨   All gateways ∨   Last 7 days ∨   2-hourly ∨   ‹ 24 – 30 Sept 2026 ›
+ *
+ * Read left to right it is a sentence about what is on screen. Each part is
+ * text and a chevron until you reach for it.
+ *
+ * Two zones, not one wrapping row: the controls wrap among THEMSELVES and
+ * the actions keep the right edge, so what changes on the left cannot push
+ * what is on the right onto a line of its own. And nothing in the controls
+ * comes and goes, or changes width, when the window moves — the time
+ * trigger reserves its widest label, the pager its widest date, and the
+ * pager is present even on the live window.
+ */
+export function TimeRangeBar({ value, onChange, anchor, picker, grain, filters, actions }: TimeRangeBarProps) {
+  const p = usePopover()
+  const live = anchor.atNow && !anchor.custom
+  const label = anchor.custom || value == null ? 'Custom range'
+    : live ? RANGE_LABELS[value]
+    : RANGE_SPANS[value]
+  const span = spanLabel(anchor.window.from, anchor.window.to)
+
+  return (
     <div className="viz-toolbar">
       <div className="viz-toolbar__controls">
-        <div className="viz-segmented" role="group" aria-label="Window duration">
-          {RANGES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              className="viz-segmented__btn"
-              aria-pressed={value === r}
-              onClick={() => onChange(r)}
-            >
-              {r}
-            </button>
-          ))}
+        {filters}
+
+        <div className="viz-dropwrap viz-time" ref={p.root}>
+          <DropTrigger
+            ref={p.trigger}
+            className="viz-time__trigger"
+            label={label}
+            sizers={TIME_SIZERS}
+            open={p.open}
+            active={!live}
+            title={span}
+            ariaLabel={`Time range: ${label}, ${span}`}
+            onClick={() => p.setOpen((v) => !v)}
+          />
+          {p.open ? (
+            <div className="viz-time__pop" ref={p.pop}>
+              <TimePicker
+                quick={QUICK}
+                value={anchor.custom ? null : value}
+                custom={anchor.custom ? anchor.window : null}
+                onQuick={(k) => { onChange(k); p.close() }}
+                onApply={(a, b) => { picker.onApply(a, b); p.close() }}
+                recent={picker.recent}
+                today={picker.today}
+                minDay={picker.minDay}
+                maxSpanDays={picker.maxSpanDays}
+                zone={picker.zone}
+                offset={picker.offset}
+              />
+            </div>
+          ) : null}
         </div>
 
-        {anchor ? <AnchorBar range={value} {...anchor} /> : null}
-        {filters}
+        {grain ? (
+          <SelectMenu
+            className="viz-grain__trigger"
+            heading="Granularity"
+            value={grain.value}
+            options={grain.options}
+            onChange={grain.onChange}
+          />
+        ) : null}
+
+        <Pager {...anchor} live={live} range={value} span={span} />
       </div>
       {actions ? <div className="viz-toolbar__actions">{actions}</div> : null}
     </div>
@@ -96,154 +158,52 @@ export function TimeRangeBar({ value, onChange, anchor, filters, actions }: Time
 }
 
 /**
- * Chevron, date, chevron — sized to match the duration control beside it, so
- * the pair reads as one row of controls rather than two unrelated widgets.
+ * Previous window, the dates on screen, next window.
+ *
+ * Present on the live window too, where it says which days "Last 7 days"
+ * covers — so stepping back changes a label, never the layout.
  */
-function AnchorBar({
-  range, onStep, onSelectRange, onNow, atNow, atOldest, window: win, maxDay, minDay, maxSpanDays, note, custom,
-}: AnchorControls & { range: RangeKey | null }) {
-  /** Live means the latest window of a preset: a custom range never is. */
-  const live = atNow && !custom
-  const [open, setOpen] = useState(false)
-  const root = useRef<HTMLDivElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const pop = useRef<HTMLDivElement>(null)
-
-  /* Keep the popover inside the viewport. It hangs off the left edge of a
-     control that is itself near the right edge on a narrow screen, where it
-     would otherwise push the whole page sideways. Measured rather than
-     guessed with a media query: what overflows depends on where the toolbar
-     wrapped, not on the breakpoint. */
-  useLayoutEffect(() => {
-    if (!open) return
-    const fit = () => {
-      const el = pop.current
-      if (!el) return
-      el.style.transform = ''
-      const r = el.getBoundingClientRect()
-      const over = r.right - (document.documentElement.clientWidth - GUTTER)
-      if (over > 0) el.style.transform = `translateX(${-Math.min(over, r.left - GUTTER)}px)`
-    }
-    fit()
-    globalThis.addEventListener('resize', fit)
-    return () => globalThis.removeEventListener('resize', fit)
-  }, [open])
-
-  // Close on outside click or Escape, and hand focus back to the trigger —
-  // a popover that swallows focus is worse than no popover.
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setOpen(false)
-      trigger.current?.focus()
-    }
-    document.addEventListener('pointerdown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  const stepLabel = custom ? 'range' : range
-
+function Pager({
+  onStep, atNow, atOldest, window: win, custom, live, range, span,
+}: AnchorControls & { live: boolean; range: RangeKey | null; span: string }) {
+  const unit = custom || range == null ? 'range' : RANGE_SPANS[range]
   return (
-    /* `data-past` is the "you are looking at history" signal the chip used
-       to carry, moved to the control you would act on. */
-    <div className="viz-anchor" role="group" aria-label="Window position" ref={root} data-past={live ? undefined : ''}>
+    <div className="viz-pager" role="group" aria-label="Window position" data-past={live ? undefined : ''}>
       {/* Stepping past retention would show a window the source has
           already expired. */}
       <button
         type="button"
         className="viz-anchor__step"
-        aria-label={`Previous ${stepLabel}`}
-        title={atOldest ? 'No data older than this is retained' : `Previous ${stepLabel}`}
+        aria-label={`Previous ${unit}`}
+        title={atOldest ? 'No data older than this is retained' : `Previous ${unit}`}
         disabled={atOldest}
         onClick={() => onStep(-1)}
       >
         <ChevronLeft />
       </button>
-
-      <button
-        ref={trigger}
-        type="button"
-        className="viz-anchor__date"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        data-custom={custom ? '' : undefined}
-        title="Pick a start and end date"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <CalendarIcon />
-        {/* The label shares a grid cell with invisible copies of the widest
-            labels of the same shape, so the button is exactly as wide as its
-            longest form in the real font: a month growing from "Mar" to
-            "Sept" cannot nudge the filters, and there is no slack either. */}
-        <span className="viz-anchor__daylabel">
-          <span>{spanLabel(win.from, win.to)}</span>
-          {widestLabels(win.from, win.to).map((s) => (
-            <span key={s} className="viz-anchor__sizer" aria-hidden="true">{s}</span>
-          ))}
-        </span>
-      </button>
-
+      {/* Invisible copies of the widest labels of the same shape share the
+          cell, so "Sept" being wider than "Mar" cannot nudge anything. */}
+      <span className="viz-pager__label">
+        <span>{span}</span>
+        {widestLabels(win.from, win.to).map((s) => (
+          <span key={s} className="viz-drop__sizer" aria-hidden="true">{s}</span>
+        ))}
+      </span>
       {/* Stepping past now would show a window that has not happened. */}
       <button
         type="button"
         className="viz-anchor__step"
-        aria-label={`Next ${stepLabel}`}
-        title={atNow ? 'Already at the latest window' : `Next ${stepLabel}`}
+        aria-label={`Next ${unit}`}
+        title={atNow ? 'Already at the latest window' : `Next ${unit}`}
         disabled={atNow}
         onClick={() => onStep(1)}
       >
         <ChevronRight />
       </button>
-
-      {/*
-        Always here, disabled when there is nowhere to jump to.
-        It used to be a chip that appeared beside the control, which both
-        re-laid-out the toolbar on every step and said the dates twice —
-        the button to its left already names the window.
-      */}
-      <button
-        type="button"
-        className="viz-anchor__now"
-        disabled={live}
-        title={live ? 'Already showing the latest window' : 'Return to the live window'}
-        onClick={onNow}
-      >
-        Now
-      </button>
-
-      {open ? (
-        <div className="viz-anchor__pop" ref={pop}>
-          <Calendar
-            label="Choose a start and end date"
-            value={win}
-            max={maxDay}
-            min={minDay}
-            maxSpanDays={maxSpanDays}
-            note={note}
-            onSelect={(from, to) => {
-              onSelectRange(from, to)
-              setOpen(false)
-              trigger.current?.focus()
-            }}
-          />
-        </div>
-      ) : null}
     </div>
   )
 }
 
-/** Breathing room kept between the popover and the window edge. */
-const GUTTER = 8
-
-/** "22 Sept 2026", or "4 Mar – 3 Jun 2026" — the year said once. */
 const MONTHS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
 
 /** The same label shape — single day, one year, across years — in every
@@ -253,6 +213,7 @@ function widestLabels(from: string, to: string): string[] {
   return MONTHS.map((m) => spanLabel(`${y0}-${m}-${from === to ? '28' : '27'}`, `${y1}-${m}-28`))
 }
 
+/** "22 Sept 2026", or "4 Mar – 3 Jun 2026" — the year said once. */
 function spanLabel(from: string, to: string): string {
   if (from === to) return dayLabel(from)
   const start = from.slice(0, 4) === to.slice(0, 4)
@@ -269,25 +230,6 @@ export interface ToolbarButtonProps {
   size?: 'md' | 'sm'
 }
 
-const ChevronLeft = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M10 3.5L5.5 8l4.5 4.5" />
-  </svg>
-)
-
-const ChevronRight = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M6 3.5L10.5 8 6 12.5" />
-  </svg>
-)
-
-const CalendarIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
-    <rect x="2.25" y="3.25" width="11.5" height="10.5" rx="2" />
-    <path d="M2.25 6.5h11.5M5.5 2v2.5M10.5 2v2.5" />
-  </svg>
-)
-
 export function ToolbarButton({ icon, children, onClick, size = 'md' }: ToolbarButtonProps) {
   return (
     <button
@@ -300,3 +242,15 @@ export function ToolbarButton({ icon, children, onClick, size = 'md' }: ToolbarB
     </button>
   )
 }
+
+const ChevronLeft = () => (
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M10 3.5L5.5 8l4.5 4.5" />
+  </svg>
+)
+
+const ChevronRight = () => (
+  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M6 3.5L10.5 8 6 12.5" />
+  </svg>
+)

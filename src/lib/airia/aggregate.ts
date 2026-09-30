@@ -54,34 +54,63 @@ export function slim(row: RawRow): RawRow {
 }
 
 /**
- * Bucket size and extent per range.
- *
- * Two kinds of window, and the difference is deliberate:
+ * How a window's extent is measured. Two kinds, and the difference is
+ * deliberate:
  *
  * - `count` — a FIXED number of buckets ending with the one containing the
  *   anchor. Window length is always `count x bucketMs`.
- * - `months` — a CALENDAR window. A month is not 30 days, so 1M and 3M are
- *   measured in months rather than in bars: a 1M window ending 3 April
- *   starts on 4 March, and a 3M window ending 3 June starts on 4 March too.
- *   The bar count therefore varies with the month (a 1M window is 56 to 62
- *   half-days), which is the point — a fixed 30-day window drifts off the
- *   calendar a little further every month.
+ * - `months` — a CALENDAR window. A month is not 30 days, so a window
+ *   measured in months has a bar count that varies with the month. No preset
+ *   uses it today — "Last 30 days" means thirty days — but the machinery is
+ *   kept so a "this month" range stays a one-line change.
  *
  * A calendar window is whole local days, so it still lands exactly on the
  * bucket grid at both ends.
+ */
+export type RangeSpec =
+  | { readonly bucketMs: number; readonly count: number }
+  | { readonly bucketMs: number; readonly months: number }
+
+/**
+ * Bucket size and extent per preset. The bucket size here is the DEFAULT
+ * grain; `withGrain()` re-cuts the same duration finer or coarser when the
+ * reader picks one.
  */
 export const RANGE_SPECS = {
   '24H': { bucketMs: 15 * 60_000, count: 96 },
   '7D': { bucketMs: 2 * 3_600_000, count: 84 },
   '14D': { bucketMs: 4 * 3_600_000, count: 84 },
-  '1M': { bucketMs: 12 * 3_600_000, months: 1 },
-  '3M': { bucketMs: 24 * 3_600_000, months: 3 },
-} as const
+  '30D': { bucketMs: 12 * 3_600_000, count: 60 },
+  '90D': { bucketMs: 24 * 3_600_000, count: 90 },
+} as const satisfies Record<string, RangeSpec>
 
-export type RangeSpec = (typeof RANGE_SPECS)[keyof typeof RANGE_SPECS]
 /** True for the calendar-measured ranges, whose bar count is not fixed. */
 export const isCalendar = (s: RangeSpec): s is Extract<RangeSpec, { months: number }> =>
   'months' in s
+
+/**
+ * The same window, cut into buckets of `bucketMs`.
+ *
+ * The DURATION is what the preset means, so a counted range keeps it and
+ * only the count changes: 7D is 84 two-hour bars, 168 hourly ones or 7
+ * daily ones. Only grains that divide the duration are offered — see
+ * `grainOptions()` — so the count is always whole.
+ */
+export function withGrain(spec: RangeSpec, bucketMs: number | null | undefined): RangeSpec {
+  if (bucketMs == null || bucketMs === spec.bucketMs) return spec
+  return isCalendar(spec)
+    ? { bucketMs, months: spec.months }
+    : { bucketMs, count: Math.round((spec.count * spec.bucketMs) / bucketMs) }
+}
+
+/** Per-preset grain overrides. Absent means the preset's own. */
+export type Grains = Partial<Record<RangeName, number>>
+
+/** Every preset's spec with any grain override applied. */
+export const specsWith = (grains?: Grains): Record<RangeName, RangeSpec> =>
+  Object.fromEntries(
+    Object.entries(RANGE_SPECS).map(([k, s]) => [k, withGrain(s, grains?.[k as RangeName])]),
+  ) as Record<RangeName, RangeSpec>
 
 export type RangeName = keyof typeof RANGE_SPECS
 
@@ -409,6 +438,37 @@ export function grainFor(spanMs: number): number {
   return GRAINS[GRAINS.length - 1]
 }
 
+/**
+ * The grains a reader may pick, finest first.
+ *
+ * Deliberately few, like the pickers people already know — minutes, hours,
+ * days — plus whatever the window uses by default, so the default is always
+ * one of the choices. Every one divides a day or is one, so buckets stay on
+ * local midnight.
+ */
+const PICKABLE = [15 * 60_000, 3_600_000, 86_400_000] as const
+
+/** Fewer bars than this is not a chart; more is thinner than a pixel on a
+ *  narrow card, and the chart would have to merge them behind the label. */
+const PICK_MIN_BARS = 5
+const PICK_MAX_BARS = 400
+
+/**
+ * Which grains make sense for a window `spanMs` long whose default is
+ * `native`. A grain must divide the span into whole buckets and land
+ * between `PICK_MIN_BARS` and `PICK_MAX_BARS` of them — hourly across 90
+ * days is 2,160 bars, and daily across 24 hours is one.
+ */
+export function grainOptions(spanMs: number, native: number): number[] {
+  const fits = (g: number) => {
+    const bars = spanMs / g
+    return Math.abs(bars - Math.round(bars)) < 1e-9 && bars >= PICK_MIN_BARS && bars <= PICK_MAX_BARS
+  }
+  return [...new Set([...PICKABLE, native])]
+    .filter((g) => g === native || fits(g))
+    .sort((a, b) => a - b)
+}
+
 /** The local day a calendar window ending on `endDay` begins. */
 export function calendarStartDay(endDay: Day, months: number): Day {
   // One month back from the last day, then the day after: a window ending
@@ -507,7 +567,7 @@ const emptyFact = () => ({
  */
 export function aggregate(
   rows: readonly RawRow[],
-  opts: { now: number; zone: string; source?: string | null; custom?: CustomSpec | null },
+  opts: { now: number; zone: string; source?: string | null; custom?: CustomSpec | null; grains?: Grains },
 ): AggregateResult {
   /*
    * The API returns every execution type — Data Source and Pipeline runs
@@ -575,7 +635,7 @@ export function aggregate(
      fact table. It is another window over the rows, not another pipeline —
      so everything downstream, filters and breakdowns included, works on it
      without knowing it is custom. */
-  const ranges = Object.entries(RANGE_SPECS)
+  const ranges = Object.entries(specsWith(opts.grains))
     .map(([key, spec]) => build(key, spec.bucketMs, windowFor(Z, spec, opts.now)))
     .concat(opts.custom
       ? [build('custom', opts.custom.bucketMs, customWindow(Z, opts.custom), opts.custom.to)]
@@ -716,14 +776,14 @@ export function aggregate(
  * Earliest instant ONE STEP BACK would need.
  *
  * The window before this one, plus that window's own comparison period —
- * for 3M, nine calendar months. Worth fetching up front: stepping back is
+ * for 90D, 270 days. Worth fetching up front: stepping back is
  * the first thing anyone does after reading the live window, and without
  * these rows that click is a cache miss however much history is cached
  * behind it.
  */
-export function prefetchBoundary(now: number, zone: string): number {
+export function prefetchBoundary(now: number, zone: string, grains?: Grains): number {
   const Z = makeZone(zone)
-  return Math.min(...Object.values(RANGE_SPECS).map((spec) => {
+  return Math.min(...Object.values(specsWith(grains)).map((spec) => {
     const here = windowFor(Z, spec, now)
     return windowFor(Z, spec, here.bounds[0] - 1).prevFrom
   }))
@@ -733,11 +793,11 @@ export function prefetchBoundary(now: number, zone: string): number {
  * Earliest instant any range needs, so one fetch covers them all.
  *
  * Reaches back twice each range's extent, because the KPI tiles compare
- * against the immediately preceding window of equal length — for 3M that is
- * six calendar months, which is 181 to 184 days depending on where in the
- * year it lands.
+ * against the immediately preceding window of equal length — for 90D that
+ * is 180 days. A grain override moves where a window's first bucket falls,
+ * by up to one bucket, so it is folded in here too.
  */
-export function earliestBoundary(now: number, zone: string): number {
+export function earliestBoundary(now: number, zone: string, grains?: Grains): number {
   const Z = makeZone(zone)
-  return Math.min(...Object.values(RANGE_SPECS).map((s) => windowFor(Z, s, now).prevFrom))
+  return Math.min(...Object.values(specsWith(grains)).map((s) => windowFor(Z, s, now).prevFrom))
 }

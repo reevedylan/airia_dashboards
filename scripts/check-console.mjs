@@ -7,8 +7,9 @@
  * React says most of what it has to say at runtime — key warnings, bad
  * nesting, state updates on unmounted components, failed prop types — and
  * none of it shows up in `tsc` or a screenshot. This clicks through each
- * range, both chart views, the calendar, both filters, all three breakdown
- * tabs and the theme toggle, then prints whatever was logged.
+ * range, both chart views, every grain, a typed and a calendar-drawn
+ * range, both filters, every breakdown tab and the theme toggle, then
+ * prints whatever was logged.
  *
  * Exits non-zero if anything was.
  */
@@ -31,21 +32,41 @@ if (state !== 'ready') { console.error(`Dashboard never became ready (${state}).
 await cdp.evaluate(`(async () => {
   const s = (ms) => new Promise((r) => setTimeout(r, ms))
   const click = (el) => el && el.click()
-  for (const r of ['24H', '7D', '14D', '1M', '3M']) {
-    click([...document.querySelectorAll('.viz-segmented__btn')].find((b) => b.textContent === r)); await s(400)
+  const openTime = async () => { click(document.querySelector('.viz-time__trigger')); await s(300) }
+  for (const label of ['Last 24 hours', 'Last 7 days', 'Last 14 days', 'Last 30 days', 'Last 90 days']) {
+    await openTime()
+    click([...document.querySelectorAll('.viz-tp__quickitem')].find((b) => b.textContent.startsWith(label))); await s(500)
   }
   for (const t of document.querySelectorAll('.viz-viewtoggle button')) { click(t); await s(250) }
   for (const t of document.querySelectorAll('.viz-tabs button, [role=tab]')) { click(t); await s(300) }
   click(document.querySelector('.viz-toolbar__actions .viz-btn')); await s(250)
 
-  // a custom range: two clicks in the calendar
-  click(document.querySelector('.viz-anchor__date')); await s(300)
-  const days = [...document.querySelectorAll('.viz-cal__day')].filter((d) => !d.disabled)
-  click(days[2]); await s(200); click(days[10]); await s(2500)
+  // every grain the current window offers, then back to its default
+  click(document.querySelector('.viz-grain__trigger')); await s(250)
+  const grains = document.querySelectorAll('.viz-menu__item').length
+  for (let i = 0; i < grains; i++) {
+    click(document.querySelector('.viz-grain__trigger')); await s(250)
+    click(document.querySelectorAll('.viz-menu__item')[i]); await s(900)
+  }
 
-  // step, then home
+  // an absolute range typed by hand, then one from the calendar
+  await openTime()
+  const [from, to] = document.querySelectorAll('.viz-tp__input input')
+  const set = (el, v) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  set(from, 'now-10d'); set(to, 'now-3d'); await s(100)
+  click(document.querySelector('.viz-tp__apply')); await s(2500)
+  await openTime()
+  click(document.querySelector('.viz-tp__calbtn')); await s(300)
+  const days = [...document.querySelectorAll('.viz-cal__day')].filter((d) => !d.disabled)
+  click(days[2]); await s(200); click(days[10]); await s(200)
+  click(document.querySelector('.viz-tp__apply')); await s(2500)
+
+  // step back, then forward to where it was
   click(document.querySelectorAll('.viz-anchor__step')[0]); await s(2500)
-  click(document.querySelector('.viz-anchor__now')); await s(2500)
+  click(document.querySelectorAll('.viz-anchor__step')[1]); await s(2500)
 
   // both filters, and an isolated row
   for (const trigger of document.querySelectorAll('.viz-msel__trigger')) {

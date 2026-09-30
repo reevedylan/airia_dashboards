@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { aggregate, earliestBoundary, prefetchBoundary, SERVICE_KEY,
-         type AggregateResult, type RangeMap, type RawRow } from '../lib/airia/aggregate'
+         type AggregateResult, type Grains, type RangeMap, type RangeName, type RawRow } from '../lib/airia/aggregate'
 import { fetchAll, probe, AuthError, BACKGROUND_CONCURRENCY, type Progress } from '../lib/airia/fetchAll'
 import { ZONE, DAY_MS, RETENTION_MS, customSpec, customPrevFrom, type DayRange } from './window'
 
@@ -128,10 +128,23 @@ function rowsBetween(rows: readonly RawRow[], from: number, to: number): readonl
   return start === 0 && end === rows.length ? rows : rows.slice(start, end)
 }
 
+/**
+ * A grain the reader picked, and which window it applies to: one preset, or
+ * the custom range. Null is every window's own default.
+ *
+ * Changing it is a re-fold, never a fetch — the window's duration, and so
+ * the rows it needs, is the same whatever it is cut into.
+ */
+export interface GrainPick {
+  window: RangeName | 'custom'
+  bucketMs: number
+}
+
 export function useAiriaLive(
   key: string | null,
   anchor: number | null,
   custom: DayRange | null = null,
+  grain: GrainPick | null = null,
 ): LoadState {
   const [state, setState] = useState<LoadState>({ status: 'idle', data: null })
   const run = useRef(0)
@@ -200,9 +213,12 @@ export function useAiriaLive(
         const floor = wallNow - RETENTION_MS
         /* A custom window reaches wherever it was drawn, and its own
            comparison period reaches an equal span before that. */
-        const spec = custom ? customSpec(custom) : null
+        const spec = custom ? customSpec(custom, grain?.window === 'custom' ? grain.bucketMs : null) : null
+        const grains: Grains | undefined = grain && grain.window !== 'custom'
+          ? { [grain.window]: grain.bucketMs }
+          : undefined
         const customFrom = spec ? customPrevFrom(spec) : Infinity
-        const needFrom = Math.max(Math.min(earliestBoundary(at, ZONE), customFrom), floor)
+        const needFrom = Math.max(Math.min(earliestBoundary(at, ZONE, grains), customFrom), floor)
 
         if (cache.current?.key !== key) {
           cache.current = null
@@ -263,7 +279,7 @@ export function useAiriaLive(
         show({ message: 'Aggregating…' })
         // Yield a frame so the message paints before a synchronous fold.
         await new Promise((r) => requestAnimationFrame(() => r(null)))
-        const agg: AggregateResult = aggregate(rows, { now: at, zone: ZONE, source: 'Gateway', custom: spec })
+        const agg: AggregateResult = aggregate(rows, { now: at, zone: ZONE, source: 'Gateway', custom: spec, grains })
         if (!live()) return
 
         held.current = {
@@ -304,7 +320,7 @@ export function useAiriaLive(
            the window before this one plus its own comparison period. That
            is the click people actually make next, and until those rows land
            it is a cache miss however much older history is already held. */
-        const firstStop = Math.max(prefetchBoundary(at, ZONE), floor)
+        const firstStop = Math.max(prefetchBoundary(at, ZONE, grains), floor)
         while (live() && cache.current && cache.current.from > floor) {
           const to = cache.current.from
           const from = to > firstStop
@@ -365,10 +381,10 @@ export function useAiriaLive(
     })()
 
     return () => { ctrl.abort() }
-    // Depends on the custom range's ENDS, not its object identity, so a
-    // re-render with an equal range does not refetch.
+    // Depends on the custom range's ENDS and the grain's VALUE, not their
+    // object identities, so a re-render with an equal one does not refold.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, anchor, custom?.from, custom?.to])
+  }, [key, anchor, custom?.from, custom?.to, grain?.window, grain?.bucketMs])
 
   return state
 }

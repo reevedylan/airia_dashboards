@@ -7,15 +7,15 @@
  * Each one is here because it broke once:
  *
  *  1. Toolbar controls share one height and one baseline. They used to size
- *     themselves from their own padding, leaving the anchor 15px shorter
- *     than the range buttons beside it.
+ *     themselves from their own padding, leaving one control 15px shorter
+ *     than the one beside it.
  *  2. A card does not resize when its view toggles. A legend's width changes
  *     with the series on show, so anything sharing its row slid sideways —
  *     and down — on every toggle.
  *  3. The toolbar does not re-lay-out when the window moves. An off-live
  *     chip appearing used to push the key chip onto a second row.
- *  4. The calendar popover stays inside the viewport, and the page never
- *     scrolls sideways.
+ *  4. The time picker, with its calendar open, stays inside the viewport,
+ *     and the page never scrolls sideways.
  *
  * Exits non-zero on failure, so it drops into CI beside the palette gate.
  */
@@ -40,7 +40,7 @@ const report = (ok, name, detail) => {
 await cdp.resize(1600, 1000)
 await wait(400)
 const bar = await cdp.evaluate(`(() => {
-  const els = [...document.querySelectorAll('.viz-segmented, .viz-anchor, .viz-msel__trigger, .viz-keychip, .viz-toolbar__actions .viz-btn')]
+  const els = [...document.querySelectorAll('.viz-drop, .viz-pager, .viz-keychip, .viz-toolbar__actions .viz-btn')]
   const boxes = els.map((e) => e.getBoundingClientRect())
   return { heights: [...new Set(boxes.map((b) => Math.round(b.height)))], tops: [...new Set(boxes.map((b) => Math.round(b.top)))], n: els.length }
 })()`)
@@ -74,8 +74,9 @@ for (const width of [1600, 1400, 1280, 1024]) {
     const settle = ${SETTLE}
     const box = () => Object.fromEntries([...document.querySelectorAll('.viz-toolbar__controls > *, .viz-toolbar__actions')]
       .map((e) => { const r = e.getBoundingClientRect(); return [e.className.split(' ')[0], [r.x, r.y, r.width].map(Math.round).join(',')] }))
-    const now = document.querySelector('.viz-anchor__now')
-    if (now && !now.disabled) { now.click(); await settle() }
+    // Back to the live window first: the previous width stepped back once.
+    const fwd = document.querySelectorAll('.viz-anchor__step')[1]
+    if (fwd && !fwd.disabled) { fwd.click(); await settle() }
     const live = box()
     document.querySelectorAll('.viz-anchor__step')[0].click(); await settle()
     const past = box()
@@ -93,15 +94,17 @@ await cdp.resize(640, 900)
 await wait(350)
 const pop = await cdp.evaluate(`(async () => {
   const s = (ms) => new Promise((r) => setTimeout(r, ms))
-  document.querySelector('.viz-anchor__date').click(); await s(350)
-  const cal = document.querySelector('.viz-cal')?.getBoundingClientRect()
+  document.querySelector('.viz-time__trigger').click(); await s(350)
+  document.querySelector('.viz-tp__calbtn').click(); await s(350)
+  const boxes = [...document.querySelectorAll('.viz-tp__main, .viz-tp__cal')].map((e) => e.getBoundingClientRect())
   const vw = document.documentElement.clientWidth
-  const out = { fits: !!cal && cal.left >= 0 && cal.right <= vw, right: cal && Math.round(cal.right), vw,
+  const out = { fits: boxes.length === 2 && boxes.every((b) => b.left >= 0 && b.right <= vw),
+                right: Math.round(Math.max(...boxes.map((b) => b.right))), vw,
                 overflowX: document.documentElement.scrollWidth > vw }
-  document.body.click()
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
   return out
 })()`)
-report(pop.fits && !pop.overflowX, 'calendar fits the viewport at 640px with no sideways scroll',
+report(pop.fits && !pop.overflowX, 'time picker and calendar fit the viewport at 640px with no sideways scroll',
   `right edge ${pop.right} of ${pop.vw} · page overflow ${pop.overflowX}`)
 
 cdp.close()

@@ -5,7 +5,7 @@
  *
  *   node scripts/shoot.mjs --out /tmp/a.png
  *   node scripts/shoot.mjs --out /tmp/b.png --hover 600,330
- *   node scripts/shoot.mjs --out /tmp/c.png --click-sel '.viz-anchor__date'
+ *   node scripts/shoot.mjs --out /tmp/c.png --click-sel '.viz-time__trigger'
  *   node scripts/shoot.mjs --out /tmp/d.png --width 640 --theme dark
  *
  * Needs headless Chrome on :9222 — see `_cdp.js`. The API key comes from

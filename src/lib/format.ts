@@ -117,3 +117,15 @@ export function bucketFormat(bucketMs: number, zone: string): BucketFormat {
     },
   }
 }
+
+/**
+ * A bucket size as the grain picker names it: "15-minute", "Hourly",
+ * "2-hourly", "Daily", "Every 4 days".
+ */
+export function grainName(bucketMs: number): string {
+  const DAY = 86_400_000
+  const HOUR = 3_600_000
+  if (bucketMs % DAY === 0) { const d = bucketMs / DAY; return d === 1 ? 'Daily' : `Every ${d} days` }
+  if (bucketMs % HOUR === 0) { const h = bucketMs / HOUR; return h === 1 ? 'Hourly' : `${h}-hourly` }
+  return `${bucketMs / 60_000}-minute`
+}

@@ -44,35 +44,62 @@ dark. Components reference them via `src/theme/palette.ts` (`series(1)` →
 
 ## Ranges, buckets and time zones
 
-Each range has a fixed bucket size, defined once in `RANGE_SPECS` in
-`src/lib/airia/aggregate.ts`. The EXTENT comes in two kinds:
+Each range has a default bucket size, defined once in `RANGE_SPECS` in
+`src/lib/airia/aggregate.ts`:
 
-| Range | Bucket | Extent | Bars |
-|---|---|---|---|
-| 24H | 15 min | `count` 96 | 96 |
-| 7D | 2 hr | `count` 84 | 84 |
-| 14D | 4 hr | `count` 84 | 84 |
-| 1M | 12 hr | `months` 1 | 56–62 |
-| 3M | 1 day | `months` 3 | 89–92 |
+| Range | Picker label | Default bucket | Extent | Bars |
+|---|---|---|---|---|
+| 24H | Last 24 hours | 15 min | `count` 96 | 96 |
+| 7D | Last 7 days | 2 hr | `count` 84 | 84 |
+| 14D | Last 14 days | 4 hr | `count` 84 | 84 |
+| 30D | Last 30 days | 12 hr | `count` 60 | 60 |
+| 90D | Last 90 days | 1 day | `count` 90 | 90 |
+
+The EXTENT comes in two kinds, though every preset uses the first:
 
 - **`count`** — a fixed number of buckets ending with the one containing the
   anchor. Window length is `count x bucketMs`.
-- **`months`** — a CALENDAR window, because a month is not 30 days. A 1M
-  window ending 3 April starts on 4 March; a 3M window ending 3 June starts
-  on 4 March too. One ending 31 March starts on 1 March — a whole calendar
-  month — because the month arithmetic **clamps** the day (31 March less one
-  month is 28 February, not 3 March).
+- **`months`** — a CALENDAR window, because a month is not 30 days. A
+  one-month window ending 3 April starts on 4 March; one ending 31 March
+  starts on 1 March, because the month arithmetic **clamps** the day (31
+  March less one month is 28 February, not 3 March). The presets used to be
+  1M and 3M measured this way; they became 30D and 90D because the picker
+  says "Last 30 days", and a label that says thirty days should mean it.
+  The kind is kept so a "this month" range stays a one-line change.
 
-The bar count of a calendar range therefore varies with the month, which is
-the point: a fixed 30-day window walks off the calendar a little further
-every month. Nothing may assume a constant count — `RangeBlock.bucketCount`
-is `bounds.length`, derived. What has not changed is that **the bar count
+Nothing may assume a constant count — `RangeBlock.bucketCount` is
+`bounds.length`, derived — because a grain override changes it and a
+calendar window would too. What has not changed is that **the bar count
 never depends on card width**.
 
 `windowFor()` is the single resolver for both kinds and for the comparison
 window; `earliestBoundary()` folds over it rather than doing its own
 arithmetic. Adding or changing a range means editing `RANGE_SPECS` in
-`aggregate.ts` and `RANGES` in `TimeRangeBar.tsx` together.
+`aggregate.ts` and `RANGES` / `RANGE_LABELS` / `RANGE_SPANS` in
+`TimeRangeBar.tsx` together.
+
+### Picking a grain
+
+The grain menu re-cuts the SAME window: `withGrain(spec, ms)` keeps a
+counted range's duration and changes only its count, so 7D is 84 two-hour
+bars, 168 hourly or 7 daily. `grainOptions(spanMs, native)` decides what
+is offered — 15-minute, Hourly, Daily and the window's own default,
+filtered to grains that divide the span into 5 to 400 whole bars. Hourly
+across 90 days is 2,160 bars and daily across 24 hours is one, so neither
+is offered.
+
+- **One fold, not a second pipeline.** The override reaches `aggregate()`
+  as `grains` (or through `customSpec(range, grain)` for a custom window),
+  and `earliestBoundary`/`prefetchBoundary` take it too, because a grain
+  moves where a window's first bucket falls by up to one bucket. Changing
+  grain is a re-fold of cached rows, never a fetch.
+- **The pick is kept, and applied where it fits** — the isolation rule.
+  Hourly chosen on 7D survives a trip to 90D (which falls back to Daily)
+  and is back on return. Only a grain that differs from the default is sent
+  to the fold, so the default path costs nothing extra.
+- **400 is a ceiling for a reason.** Past about that many bars a narrow card
+  has fewer pixels than bars and `BarChart` merges them behind a label that
+  still names one bucket.
 
 **Buckets are aligned to local time, not UTC** (`ZONE` in
 `src/data/window.ts`, resolved once at load: `?tz=` in the URL, else the
@@ -110,14 +137,17 @@ What comes out is right in every range, and honest about the day rather
 than hiding it. A counted range is exactly `count` bars of WALL-CLOCK time,
 so a window spanning a transition really is 168 hours give or take one:
 
-| Window containing | 24H | 7D | 14D | 1M | 3M |
+| Window containing | 24H | 7D | 14D | 30D | 90D |
 |---|---|---|---|---|---|
-| the 25-hour night | 96 bars | 84, one 3 hr | 84, one 5 hr | 62, one 13 hr | 90, one 25 hr |
-| the 23-hour night | 96 bars | 84, one 1 hr | 84, one 3 hr | 60, one 11 hr | 92, one 23 hr |
+| the 25-hour night | 96 bars | 84, one 3 hr | 84, one 5 hr | 60, one 13 hr | 90, one 25 hr |
+| the 23-hour night | 96 bars | 84, one 1 hr | 84, one 3 hr | 60, one 11 hr | 90, one 23 hr |
 
 Bar counts stay exactly as `RANGE_SPECS` declares, and every window starts
-on a bucket boundary. Checked against all five ranges on an ordinary day
-and on both transitions.
+on a bucket boundary. Checked against all five ranges and every grain each
+one offers, on an ordinary day and on both transitions, in Sydney, London,
+Kolkata and Lord Howe. The one boundary off a wall-clock multiple is the
+2-hour grid on the night the clocks go forward: 02:00 does not exist, so
+that boundary is 03:00 — the "one 1 hr" bar in the table.
 
 ### Whose local time
 
@@ -155,8 +185,8 @@ Two rules, both learned from getting it wrong:
 
 - **Derive the format from the BUCKET SIZE, never the chart's span.** The
   charts' fallback (`grainFor` + `fullDate`) infers a format from the total
-  span, which put 7D (2-hour buckets), 14D (4-hour) and 1M (12-hour) into a
-  date-only format — on 1M you could not tell AM from PM. Always pass
+  span, which put 7D (2-hour buckets), 14D (4-hour) and 30D (12-hour) into a
+  date-only format — on 30D you could not tell AM from PM. Always pass
   `formatX` when the bucket size is known.
 - **Render in the zone the buckets were aligned to**, not the viewer's. A
   bucket that starts at local midnight would otherwise read as an arbitrary
@@ -275,51 +305,63 @@ not a re-fetch (~9s). Only an anchor reaching past the cached span fetches,
 and then only the missing older slice, which is prepended. Don't "simplify"
 this into a refetch per step.
 
-`stepWindow()` steps in the range's OWN units: calendar months for 1M and
-3M, so a step back from a window ending 3 April lands on one ending 3 March
-— contiguous with it, and still a whole month. A fixed 30-day step would
-walk off the calendar. For the counted ranges it slides by
-`count x bucketMs` and re-snaps a day-aligned anchor to the local-day grid,
-because those durations are whole numbers of days and plain arithmetic moves
+`stepWindow()` steps in the range's OWN units: calendar months for a
+`months` range, so a step back stays contiguous and a whole month. For the
+counted ranges — every preset — it slides by `count x bucketMs`, the
+DEFAULT spec's duration, so a grain override never changes the step. It
+re-snaps a day-aligned anchor to the local-day grid, because those durations are whole numbers of days and plain arithmetic moves
 them an hour across a DST change — visible on 7D, where the last bar is two
 hours wide.
 
 ### A preset always means "ending now"
 
-Clicking 24H/7D/14D/1M/3M discards the anchor and any custom range and
-jumps to the live window — including re-clicking the preset that is already
-selected, which is the natural "put it back" gesture. A preset that kept
-the old anchor made the buttons mean two things at once: how long the
-window is, and, invisibly, where it still sits.
+Choosing a quick range discards the anchor and any custom range and jumps
+to the live window — including re-choosing the one already selected, which
+is the natural "put it back" gesture, and now the only one: there is no
+separate "Now" button. A preset that kept the old anchor made it mean two
+things at once: how long the window is, and, invisibly, where it still sits.
 
-### The calendar picks a RANGE, in whole days
+### The time picker, Grafana-style
 
-`Calendar.tsx` is a month view; `TimeRangeBar` hangs it off the anchor
-control. It speaks civil days (`YYYY-MM-DD`) and nothing else:
+`TimePicker.tsx` hangs off the time trigger and is laid out like Grafana's:
+quick ranges with a search on the right, an absolute From/To on the left,
+recently used absolute ranges under it, the zone and its offset in the
+footer, and `Calendar.tsx` sliding out beside it from either field's
+calendar button. It speaks civil days (`YYYY-MM-DD`) and nothing else:
 
-- **Its arithmetic is UTC-based**, which is exact rather than sloppy,
-  because a civil calendar is the same everywhere — September has 30 days in
-  Sydney and in Reykjavik. Turning a day into an instant is `customSpec()`
-  in `data/airia.ts`, the only place that knows the zone.
+- **Fields take `YYYY-MM-DD`, `now` or `now-Nd`.** `now-Nd` is the day N
+  days before today, and both ends are included, so `now-10d` to `now` is
+  eleven days.
+- **A quick range typed by hand IS the quick range.** `now-7d` to `now`
+  selects "Last 7 days" — the live, moving window — not a fixed custom span
+  that happens to match it today and drifts from it tomorrow. The fields
+  open pre-filled that way when a preset is showing.
+- **Calendar arithmetic is UTC-based**, which is exact rather than sloppy,
+  because a civil calendar is the same everywhere. Turning a day into an
+  instant is `customSpec()` in `data/window.ts`, the only place that knows
+  the zone.
 - **From is midnight, To is the last millisecond of the closing day**, both
   in `ZONE`. Verified across the offset change: 10 January resolves to
-  13:00Z, 10 September to 14:00Z — the same local midnight either side of
-  daylight saving, which UTC-based bounds would have got wrong by an hour.
-- **No time of day, ever.** A window shorter than a day is what the 24H
-  preset is for, and two controls answering one question is how a picker
-  becomes a puzzle.
-- **Two clicks.** First arms the start, the pointer previews the span, the
-  second applies it immediately — no Apply button. The same day twice is a
-  single day. Click order is irrelevant; the ends resolve low-to-high. After
-  a completed range the next click starts a new one.
-- **An invalid range is never expressible.** The span cap and the retention
-  floor are enforced by DISABLING days — once a start is down, anything
-  more than a year from it greys out — so there is nothing to validate and
-  nothing to reject.
+  13:00Z, 10 September to 14:00Z.
+- **No time of day, ever.** A window shorter than a day is what 24 hours is
+  for; buckets are aligned to local midnight, and a range starting at 14:37
+  would have a ragged first bar.
+- **The calendar fills the fields; Apply applies.** Two clicks draw a range
+  in the calendar, which closes and leaves it in From/To. Quick ranges and
+  recent ranges apply at once, as in Grafana.
+- **Typed input is validated, with a message.** Text can say anything, so
+  the old "never expressible" rule cannot hold for it. Errors show once a
+  field is left or Apply is pressed: unparseable, in the future, older than
+  retention, From after To, longer than a year. The calendar still enforces
+  the same limits by disabling days.
+- **Recent ranges live in `localStorage`** — civil days only, no tenant
+  data, four at most, every access in `try/catch`. Ones that have aged past
+  retention are hidden rather than offered.
 
 A custom range and a preset are mutually exclusive: choosing one clears the
-other, and no preset is pressed while a drawn range is showing. The
-chevrons work in both modes, stepping by the window's own length.
+other, and the trigger reads "Custom range" while a drawn one is showing.
+The pager's chevrons work in both modes, stepping by the window's own
+length.
 
 ### Grain follows the span
 
@@ -339,7 +381,7 @@ year it stays between 60 and 118 bars.
 so a custom range matching a preset draws the same chart. That is what
 keeps the two modes comparable, and it is why 8h is deliberately NOT on the
 ladder: it would have given a 30-day custom range a different grain from
-the 1M preset over the same span.
+the 30D preset over the same span. The grain menu can still override it.
 
 At the one-year cap the grain is 4 days (92 bars). A week would undershoot
 to ~52, which is exactly the clunkiness the floor exists to prevent.
@@ -375,30 +417,42 @@ There used to be two, and the instant-keyed one carried the April defect.
 
 ## Toolbar layout: two zones, nothing that appears
 
-The toolbar is `.viz-toolbar__controls` (range, anchor, filters) beside
-`.viz-toolbar__actions` (key chip, theme). The controls wrap among
+```
+All users ∨  All gateways ∨  Last 7 days ∨  2-hourly ∨  ‹ 23 Sept – 30 Sept 2026 ›     [key] [Dark]
+```
+
+Modelled on Typesafe's: the scope, the window and the grain are plain text
+and a chevron (`DropTrigger`, `.viz-drop`) until reached for, so the row
+reads as a sentence about what is on screen rather than a form. The boxed
+controls are only the actions on the right.
+
+The toolbar is `.viz-toolbar__controls` (filters, time, grain, pager)
+beside `.viz-toolbar__actions` (key chip, theme). The controls wrap among
 themselves; the actions keep the right edge. It was one flat `flex-wrap`
 row with the actions pushed over by `margin-left: auto`, which meant
 anything appearing on the left could shove them onto a line of their own —
-and did, once the gateway filter used up the slack: stepping the window
-back re-laid-out the whole toolbar at 1400px.
+and did: stepping the window back re-laid-out the whole toolbar at 1400px.
 
 Same rule as the card header, one row up: **a control that comes and goes
-moves everything beside it.** So the off-live state does not add a chip.
-"Now" is always in the anchor group, disabled when there is nowhere to
-jump to, and "you are in history" is a tinted border on the control you
-would act on. That also removed a duplication — the chip named the window
-the date button beside it was already naming.
+moves everything beside it.** So:
 
-Two details worth keeping:
+- **The pager is always there**, live window included, where it names the
+  days "Last 7 days" covers. Stepping back changes its label and nothing
+  else. "You are in history" is the time trigger reading "7 days" instead
+  of "Last 7 days", tinted `--viz-focus`, and the pager's dates in full ink.
+- **Every trigger reserves its widest label.** `DropTrigger` takes
+  `sizers` — invisible copies of every label it can show, stacked in one
+  grid cell — so "Last 7 days" → "7 days" → "Custom range" cannot move the
+  grain menu. The pager does the same with the same-shaped date in all
+  twelve months, because tabular numerals fix the digits but not the
+  letters, and "Sept" being wider than "Mar" was enough to slide things.
+  Verified: stepping back moves nothing by a pixel, at 1600 to 1024px.
+- **Popovers share `usePopover()`** (`primitives/popover.ts`): open state,
+  outside click, Escape returning focus to the trigger, and fitting inside
+  the viewport by measurement. It re-measures on a `ResizeObserver`,
+  because the time picker grows a calendar pane while open. Below 720px
+  the picker stacks: calendar, absolute range, quick ranges.
 
-- **Reserve the widest label.** `.viz-anchor__daylabel` stacks invisible
-  copies of the same-shaped label in all twelve months in one grid cell,
-  because tabular numerals fix the digits but not the letters, and "Sept"
-  being wider than "Mar" was enough to slide the filters. It used to be a
-  `min-width` in `ch`, which over-reserved — proportional month names are
-  narrower than that many zeros — and left a visible gap after the end
-  date. Verified: three steps back, nothing moves by a pixel.
 - **`--viz-seq-100` is not pale in dark mode.** It is the ramp's lightest
   step, which is near-white in light mode and a mid blue in dark, so
   filling a control with it swamps the dark toolbar. Tint a border, or use
@@ -440,18 +494,18 @@ Two details that took measuring:
 
 Airia's logs expire at a year, so nothing older can be selected, fetched or
 held. `RETENTION_DAYS` in `data/airia.ts` is the one definition, and it
-bounds three things: `oldestEndDay()` (the calendar's `min` and the back
+bounds three things: `oldestEndDay()` (the picker's `min` and the back
 chevron's disabled state), the backfill target, and `needFrom` on every
 fetch.
 
-**The bound is on the whole window, not on the date you click.** A 3M window
-ending one day inside retention would be two-thirds empty, so
-`oldestEndDay()` is the end day whose window *starts* on the floor — for 3M
-that is about 275 days ago, for 24H 365. Verified per range: every one of
+**The bound is on the whole window, not on the date you click.** A 90D
+window ending one day inside retention would be mostly empty, so
+`oldestEndDay()` is the end day whose window *starts* on the floor — for 90D
+that is 276 days ago, for 24H 365. Verified per range: every one of
 them starts exactly on the floor day.
 
 Switching range re-clamps the anchor (`clampAnchor`), because an anchor
-that is legal for 24H can be older than 3M's oldest window.
+that is legal for 24H can be older than 90D's oldest window.
 
 One consequence worth keeping: near the floor the COMPARISON window falls
 off the end of retention, so `App.tsx` drops the KPI deltas and says why.
@@ -477,9 +531,9 @@ it will be silently dropped.**
 
 ### Reach one step back FIRST
 
-Stepping back one window needs rows three months older than anything the
-first load fetched — the new window is three months back, and its own
-comparison period is three months before *that*. So "previous 3M" was a
+Stepping back one window needs rows ninety days older than anything the
+first load fetched — the new window is ninety days back, and its own
+comparison period is ninety days before *that*. So "previous 90D" was a
 genuine cache miss no matter how much history was queued behind it.
 
 `prefetchBoundary()` names that depth: the window before this one, plus its
@@ -544,10 +598,8 @@ went from ~9s to ~2.7s at its worst, and ~0.4s once the first slice lands.
 
 The KPI tiles compare against the window immediately before the selected one,
 of equal extent — equal length for a counted range, the same number of
-CALENDAR months for 1M and 3M, so February is compared against January
-rather than against 30 days. `earliestBoundary()` therefore reaches back
-**twice** each range's extent — six calendar months for 3M, which is 181 to
-184 days depending on where in the year it lands — and `aggregate()` accumulates those
+CALENDAR months for a `months` one. `earliestBoundary()` therefore reaches
+back **twice** each range's extent — 180 days for 90D — and `aggregate()` accumulates those
 older rows as per-user scalars (`RangeBlock.previous`) rather than a second
 fact table: the tiles need three numbers, and the filter needs them split by
 user.
@@ -619,10 +671,10 @@ on its own. Three rules:
   all-models summary. The card's headline figure follows too — showing the
   window total above a plot of one model misstates it by that model's share.
   The KPI strip keeps the all-models totals; the cards describe their plot.
-- **Isolation is dropped when it stops matching.** A model with traffic in 3M
+- **Isolation is dropped when it stops matching.** A model with traffic in 90D
   may have none in 24H, so `active` is derived by checking the isolation
   against the range's own model list rather than trusting the stored value. The
-  stored value is kept, so going back to 3M restores it.
+  stored value is kept, so going back to 90D restores it.
 - **Per-model bars need per-model-per-category data.** That is what the sparse
   `models` arrays in each range block are for; `breakdownFor()` scatters one
   model back onto the dense grid.
@@ -900,7 +952,7 @@ Four gates, and each exists because something got past the other three:
 | | what it measures |
 |---|---|
 | `check:palette` | lightness band, chroma floor, colourblind and normal-vision separation, contrast — both modes |
-| `check:layout` | toolbar baseline, card box across a view toggle, toolbar stability when the window moves, popover inside the viewport at 640px |
+| `check:layout` | toolbar baseline, card box across a view toggle, toolbar stability when the window moves, time picker and calendar inside the viewport at 640px |
 | `check:console` | drives every control once and fails on any console error or React warning |
 | `tsc -b` | what it always did, which on this codebase is less than you would hope — see below |
 
@@ -916,7 +968,7 @@ them.
 ```
 node scripts/shoot.mjs --out /tmp/a.png
 node scripts/shoot.mjs --out /tmp/b.png --hover 600,430        # says if the tooltip opened
-node scripts/shoot.mjs --out /tmp/c.png --width 640 --theme dark --click-sel '.viz-anchor__date'
+node scripts/shoot.mjs --out /tmp/c.png --width 640 --theme dark --click-sel '.viz-time__trigger'
 node scripts/probe.mjs "document.querySelector('.viz-extent').textContent"
 ```
 
@@ -928,7 +980,7 @@ the aggregation gets tested against real rows with no test runner:
 node scripts/probe.mjs "(async () => {
   const m = await import('/src/lib/airia/aggregate.ts')
   const Z = m.makeZone('Australia/Sydney')
-  return m.windowFor(Z, m.RANGE_SPECS['3M'], Date.now()).bounds.length
+  return m.windowFor(Z, m.RANGE_SPECS['90D'], Date.now()).bounds.length
 })()"
 ```
 

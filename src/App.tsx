@@ -1,19 +1,20 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   Card, RankTable, StatTile, TimeRangeBar, ToolbarButton,
-  MultiSelect, Tabs, KeyGate, type RangeKey,
+  MultiSelect, Tabs, KeyGate, RANGE_SPANS, type RangeKey,
 } from './components'
 import { ChartCard, type ChartView } from './ChartCard'
 import { series } from './theme/palette'
-import { bucketFormat, compact, currency, full, share } from './lib/format'
+import { bucketFormat, compact, currency, full, grainName, share } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown,
   previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
   stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
-  type Dimension, type BreakdownRow, type History, type DayRange, type Scope,
+  windowSpanMs, nativeGrain, ZONE,
+  type Dimension, type BreakdownRow, type History, type DayRange, type Scope, type GrainPick,
 } from './data/airia'
 import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateways'
-import { NO_GATEWAY } from './lib/airia/aggregate'
+import { NO_GATEWAY, grainOptions } from './lib/airia/aggregate'
 import { useApiKey, maskKey } from './lib/apiKey'
 import { useTheme } from './lib/theme'
 
@@ -60,10 +61,27 @@ export default function App() {
    * toolbar never shows two answers to "which window is this".
    */
   const [custom, setCustom] = useState<DayRange | null>(null)
+  /**
+   * The grain the reader picked, or null for each window's own.
+   *
+   * Kept across a change of range and applied wherever it fits — hourly
+   * suits 24H, 7D and 14D alike — but never forced onto a window it does not
+   * suit: across 90 days hourly is 2,160 bars, so that window falls back to
+   * its default and picks the choice back up on the way out. The same rule
+   * isolation follows.
+   */
+  const [grainPick, setGrainPick] = useState<number | null>(null)
+  const [recent, setRecent] = useRecentRanges()
   const [theme, setTheme] = useTheme()
 
+  const native = nativeGrain(range, custom)
+  const grainChoices = grainOptions(windowSpanMs(range, custom), native)
+  const grain = grainPick != null && grainChoices.includes(grainPick) ? grainPick : native
+  /* Only a grain that differs from the default costs a re-fold. */
+  const grainFold: GrainPick | null = grain === native ? null : { window: custom ? 'custom' : range, bucketMs: grain }
+
   const { key, setKey, clear, remember } = useApiKey()
-  const load = useAiriaLive(key, anchor, custom)
+  const load = useAiriaLive(key, anchor, custom, grainFold)
   /* The last good fold, HELD while the next one loads. Reading it only when
      the status is 'ready' is what used to drop the page back to the key gate
      mid-session, the moment an anchor reached past the cached rows. */
@@ -143,10 +161,10 @@ export default function App() {
    *  so, rather than leaving a column of hex unexplained. */
   const hasNames = hasGatewayNames(gwNames)
 
-  /* Duration is the range buttons; the anchor moves that window through
-     time. Stepping is in the range's OWN units — calendar months for 1M and
-     3M, the drawn span for a custom range — so a step back lands on the
-     window immediately before this one. */
+  /* Duration is the time picker; the pager moves that window through time.
+     Stepping is in the window's OWN length — the preset's, or the drawn
+     span for a custom range — so a step back lands on the window
+     immediately before this one. */
   const today = dayOf(Date.now())
   const floorDay = dayOf(retentionFloor())
   /* The last instant the window includes, and the day it falls on. While
@@ -155,8 +173,8 @@ export default function App() {
   const endDay = custom ? custom.to : dayOf(anchor ?? Date.now())
   const startDay = custom ? custom.from : (block ? dayOf(block.x[0]) : endDay)
   /* Airia's logs expire at a year, so no window may reach past that. For a
-     preset the bound is on the whole span, not the date clicked: a 3M
-     window ending one day inside retention would be two-thirds empty. */
+     preset the bound is on the whole span, not the date clicked: a 90D
+     window ending one day inside retention would be mostly empty. */
   const oldestDay = custom ? addDaysISO(floorDay, rangeDays(custom) - 1) : oldestEndDay(range)
   const atNow = custom ? custom.to >= today : anchor == null
 
@@ -176,19 +194,30 @@ export default function App() {
       if (custom) setCustom((prev) => (prev ? stepRange(prev, dir) : prev))
       else setAnchor((prev) => stepWindow(range, prev, dir))
     },
-    /* Any calendar selection is a custom window — that is what the picker
-       is for now — so it leaves preset mode. Both ends arrive already
-       ordered; the data layer turns them into local midnight and the last
-       millisecond of the closing day. */
-    onSelectRange: (from: string, to: string) => setCustom({ from, to }),
-    /* "Now" means the live window of whichever preset is selected, which
-       is also the way out of custom mode. */
-    onNow: () => { setAnchor(null); setCustom(null) },
     window: { from: startDay, to: endDay },
-    maxDay: today,
+  }
+
+  const pickerControls = {
+    /* An absolute range is a custom window, so it leaves preset mode. Both
+       ends arrive already ordered; the data layer turns them into local
+       midnight and the last millisecond of the closing day. */
+    onApply: (from: string, to: string) => {
+      setCustom({ from, to })
+      setRecent((prev) => [{ from, to }, ...prev.filter((r) => r.from !== from || r.to !== to)].slice(0, RECENT_MAX))
+    },
+    /* Recent ranges that have since aged past retention cannot be picked. */
+    recent: recent.filter((r) => r.from >= floorDay),
+    today,
     minDay: floorDay,
     maxSpanDays: RETENTION_DAYS,
-    note: `Whole days, ${block?.zone ?? 'local time'}. The bar size follows the span.`,
+    zone: ZONE,
+    offset: zoneOffset(ZONE),
+  }
+
+  const grainControls = {
+    value: grain,
+    options: grainChoices.map((g) => ({ value: g, label: grainName(g), hint: g === native ? 'default' : undefined })),
+    onChange: setGrainPick,
   }
 
   const toolbar = (
@@ -198,10 +227,13 @@ export default function App() {
       value={custom ? null : range}
       onChange={selectPreset}
       anchor={anchorControls}
+      picker={pickerControls}
+      grain={grainControls}
       filters={
         <>
           <MultiSelect
-            label="User"
+            label="Filter users"
+            noun="users"
             options={allUsers}
             selected={userFilter}
             onToggle={(v) => setUserFilter(toggle(v))}
@@ -214,8 +246,8 @@ export default function App() {
               between — a filter with a single option is furniture. */}
           {allGateways.length > 1 ? (
             <MultiSelect
-              label="Gateway"
-              icon={<GatewayIcon />}
+              label="Filter gateways"
+              noun="gateways"
               options={allGateways}
               selected={gatewayFilter}
               onToggle={(v) => setGatewayFilter(toggle(v))}
@@ -288,7 +320,7 @@ export default function App() {
     const d = delta(now, before)
     // Direction and magnitude only. More spend is not inherently good or bad,
     // so colouring the arrow would assert a judgement the number cannot make.
-    const period = custom ? plural(rangeDays(custom), 'day') : range
+    const period = custom ? plural(rangeDays(custom), 'day') : RANGE_SPANS[range]
     return d ? { ...d, vs: `vs previous ${period}` } : undefined
   }
 
@@ -370,7 +402,7 @@ export default function App() {
 
       {comparable ? null : (
         <p className="page__hint">
-          No period comparison here: the {custom ? plural(rangeDays(custom), 'day') : range} before this one is older than
+          No period comparison here: the {custom ? plural(rangeDays(custom), 'day') : RANGE_SPANS[range]} before this one is older than
           Airia's {RETENTION_DAYS}-day retention, so there is nothing left to compare against.
         </p>
       )}
@@ -565,6 +597,44 @@ const toggle = (value: string) => (prev: Set<string>): Set<string> => {
   return next
 }
 
+/** How many recently used absolute ranges the picker remembers. */
+const RECENT_MAX = 4
+const RECENT_STORE = 'viz-recent-ranges'
+
+/**
+ * Recently used absolute ranges, remembered in this browser.
+ *
+ * `localStorage` rather than state alone, because "the range I looked at
+ * yesterday" is the point of the list. Only civil days are stored — no
+ * tenant data, and nothing about the key. Every access is guarded: storage
+ * can be blocked or come back empty, and the list is a convenience.
+ */
+function useRecentRanges() {
+  const [recent, setRecent] = useState<DayRange[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(RECENT_STORE) ?? '[]')
+      return Array.isArray(raw)
+        ? raw.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r?.from) && /^\d{4}-\d{2}-\d{2}$/.test(r?.to)).slice(0, RECENT_MAX)
+        : []
+    } catch { return [] }
+  })
+  const update = useCallback((fn: (prev: DayRange[]) => DayRange[]) => {
+    setRecent((prev) => {
+      const next = fn(prev)
+      try { localStorage.setItem(RECENT_STORE, JSON.stringify(next)) } catch { /* convenience only */ }
+      return next
+    })
+  }, [])
+  return [recent, update] as const
+}
+
+/** "UTC+10:00" — the zone's offset right now, as the picker's footer shows it. */
+function zoneOffset(zone: string): string {
+  const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
+    .formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT'
+  return part === 'GMT' ? 'UTC+00:00' : part.replace('GMT', 'UTC')
+}
+
 /** "1 day", "31 days" — a count always reads beside its unit. */
 const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? '' : 's'}`
 
@@ -616,14 +686,6 @@ function Head() {
 const ClearIcon = () => (
   <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
     <path d="M4 4l8 8M12 4l-8 8" />
-  </svg>
-)
-
-/** A hub with spokes: several routes through one door. */
-const GatewayIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="2" y="6.25" width="12" height="7.25" rx="1.75" />
-    <path d="M5.25 6.25V4.5a2.75 2.75 0 015.5 0v1.75M8 9v1.75" />
   </svg>
 )
 

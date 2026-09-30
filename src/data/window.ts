@@ -8,7 +8,7 @@
  */
 
 import {
-  isCalendar, makeZone, customWindow, grainFor, RANGE_SPECS,
+  isCalendar, makeZone, customWindow, grainFor, grainOptions, RANGE_SPECS,
   type CustomSpec,
 } from '../lib/airia/aggregate'
 import { addDays, addMonths, spanDays, type Day } from '../lib/day'
@@ -111,7 +111,7 @@ export function dayOf(t: number): string {
  *
  * Midnight is a boundary every bucket size divides, so a window that ends
  * here lands on the same grid the bars do whichever range is selected: on
- * 3M the last bar is that whole day, on 1M its PM half, on 24H its last
+ * 90D the last bar is that whole day, on 30D its PM half, on 24H its last
  * quarter hour.
  */
 function endOfDay(day: Day): number {
@@ -129,16 +129,19 @@ function startOfDay(day: Day): number {
  * Resolve a picked pair of days into the window the fold needs.
  *
  * Whole local days, always: midnight on the first to the last millisecond
- * of the last. The grain is derived from the span rather than chosen —
- * see `grainFor` — so the chart keeps a readable bar count from one day to
- * a year without anyone picking a bucket size.
+ * of the last. The grain defaults to one derived from the span — see
+ * `grainFor` — so the chart keeps a readable bar count from one day to a
+ * year without anyone picking a bucket size. `grain` overrides it, and is
+ * honoured only when it is one `grainOptions` would offer for this span.
  */
-export function customSpec({ from, to }: DayRange): CustomSpec {
+export function customSpec({ from, to }: DayRange, grain?: number | null): CustomSpec {
   const a = from <= to ? from : to
   const b = from <= to ? to : from
   const start = startOfDay(a)
   const end = endOfDay(b)
-  return { from: start, to: end, bucketMs: grainFor(end - start + 1) }
+  const native = grainFor(end - start + 1)
+  const ok = grain != null && grainOptions(rangeDays({ from: a, to: b }) * DAY_MS, native).includes(grain)
+  return { from: start, to: end, bucketMs: ok ? grain : native }
 }
 
 /** Days in a picked range, counted inclusively. */
@@ -165,6 +168,24 @@ function slideAnchor(from: number, ms: number): number {
   return (end - below <= above - end ? below : above) - 1
 }
 
+/**
+ * How long a window is, for choosing which grains it can be cut into.
+ *
+ * Nominal rather than measured — a window spanning a daylight-saving change
+ * is an hour off — because the question is which bucket sizes divide it,
+ * and on the civil calendar they all still do.
+ */
+export function windowSpanMs(range: RangeKey, custom: DayRange | null): number {
+  if (custom) return rangeDays(custom) * DAY_MS
+  const spec = RANGE_SPECS[range]
+  return isCalendar(spec) ? spec.months * 30 * DAY_MS : spec.count * spec.bucketMs
+}
+
+/** The grain a window uses when nobody has picked one. */
+export function nativeGrain(range: RangeKey, custom: DayRange | null): number {
+  return custom ? customSpec(custom).bucketMs : RANGE_SPECS[range].bucketMs
+}
+
 /** How many whole days a fixed-count preset spans. */
 const presetDays = (range: RangeKey): number => {
   const spec = RANGE_SPECS[range]
@@ -176,8 +197,7 @@ const presetDays = (range: RangeKey): number => {
  *
  * Chosen so the window itself starts no earlier than the retention floor:
  * the bound is on the whole span, not just on the date you click, because a
- * 3M window ending one day inside retention would still be two-thirds
- * empty.
+ * 90D window ending one day inside retention would still be mostly empty.
  */
 export function oldestEndDay(range: RangeKey): Day {
   const floor = dayOf(retentionFloor())
