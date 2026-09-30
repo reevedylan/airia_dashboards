@@ -8,7 +8,7 @@
  */
 
 import {
-  isCalendar, makeZone, customWindow, grainFor, grainOptions, RANGE_SPECS,
+  isCalendar, makeZone, customWindow, grainFor, grainOptions, windowFor, withGrain, RANGE_SPECS,
   type CustomSpec,
 } from '../lib/airia/aggregate'
 import { addDays, addMonths, spanDays, type Day } from '../lib/day'
@@ -179,6 +179,23 @@ export function windowSpanMs(range: RangeKey, custom: DayRange | null): number {
   if (custom) return rangeDays(custom) * DAY_MS
   const spec = RANGE_SPECS[range]
   return isCalendar(spec) ? spec.months * 30 * DAY_MS : spec.count * spec.bucketMs
+}
+
+/**
+ * The civil days a preset window covers, computed from the window being
+ * ASKED FOR rather than read off the fold on screen.
+ *
+ * That distinction is the whole point. While a step loads, the page holds
+ * the previous fold, so taking the start from its first bucket and the end
+ * from the new anchor labelled the pager with half of each: stepping 24H
+ * back a day read "29 Sept – 30 Sept", then "29 Sept 2026", then "28 Sept –
+ * 29 Sept". Both ends come from the same `windowFor` the fold will use, so
+ * the label is right the moment the chevron is clicked.
+ */
+export function windowDays(range: RangeKey, anchor: number | null, grainMs?: number | null): DayRange {
+  const at = anchor ?? Date.now()
+  const w = windowFor(Z, withGrain(RANGE_SPECS[range], grainMs), at)
+  return { from: dayOf(w.bounds[0] ?? at), to: dayOf(at) }
 }
 
 /** The grain a window uses when nobody has picked one. */

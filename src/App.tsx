@@ -10,7 +10,7 @@ import {
   useAiriaLive, useAllUsers, seriesFor, breakdown,
   previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
   stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
-  windowSpanMs, nativeGrain, ZONE,
+  windowSpanMs, nativeGrain, windowDays, ZONE,
   type Dimension, type BreakdownRow, type History, type DayRange, type Scope, type GrainPick,
 } from './data/airia'
 import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateways'
@@ -167,11 +167,19 @@ export default function App() {
      immediately before this one. */
   const today = dayOf(Date.now())
   const floorDay = dayOf(retentionFloor())
-  /* The last instant the window includes, and the day it falls on. While
-     loading, these describe the window being fetched rather than the one
-     still on screen — the controls lead, the plot catches up. */
-  const endDay = custom ? custom.to : dayOf(anchor ?? Date.now())
-  const startDay = custom ? custom.from : (block ? dayOf(block.x[0]) : endDay)
+  /* Both ends of the window being ASKED FOR, never the fold still on
+     screen: while a step loads the page holds the previous one, and mixing
+     its start with the new end made the pager flicker through a span that
+     was neither. The controls lead, the plot catches up. Re-derived when a
+     fold lands, so a live window's start follows the clock. */
+  const generatedAt = data?.meta.generatedAt
+  const preset = useMemo(
+    () => windowDays(range, anchor, custom ? null : grain),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [range, anchor, custom ? null : grain, generatedAt],
+  )
+  const endDay = custom ? custom.to : preset.to
+  const startDay = custom ? custom.from : preset.from
   /* Airia's logs expire at a year, so no window may reach past that. For a
      preset the bound is on the whole span, not the date clicked: a 90D
      window ending one day inside retention would be mostly empty. */
