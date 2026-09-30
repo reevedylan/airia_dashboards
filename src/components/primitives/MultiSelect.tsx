@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DropTrigger } from './Dropdown'
+import { Check } from './icons'
 import { usePopover } from './popover'
 
 export interface MultiSelectProps {
@@ -109,7 +110,7 @@ export function MultiSelect({
                     className="viz-msel__opt"
                     onClick={() => onToggle(o)}
                   >
-                    <span className="viz-msel__check" aria-hidden="true">{on ? <CheckIcon /> : null}</span>
+                    <span className="viz-msel__check" aria-hidden="true">{on ? <Check size={12} /> : null}</span>
                     <span className="viz-msel__opt-label">{renderOption ? renderOption(o) : o}</span>
                   </button>
                 )
@@ -141,8 +142,3 @@ export function MultiSelect({
   )
 }
 
-const CheckIcon = () => (
-  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3 8.5l3.5 3.5L13 5" />
-  </svg>
-)

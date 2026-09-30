@@ -1,3 +1,4 @@
+import { Check, ChevronDown } from './icons'
 import { usePopover } from './popover'
 
 export interface DropTriggerProps {
@@ -46,7 +47,7 @@ export function DropTrigger({
         <span>{label}</span>
         {sizers?.map((s) => <span key={s} className="viz-drop__sizer" aria-hidden="true">{s}</span>)}
       </span>
-      <ChevronDown />
+      <ChevronDown className="viz-drop__chev" size={14} />
     </button>
   )
 }
@@ -101,7 +102,7 @@ export function SelectMenu<T extends string | number>({
                   {o.label}
                   {o.hint ? <span className="viz-menu__hint">{o.hint}</span> : null}
                 </span>
-                {o.value === value ? <CheckIcon /> : null}
+                {o.value === value ? <Check className="viz-menu__check" size={14} /> : null}
               </button>
             ))}
           </div>
@@ -111,14 +112,4 @@ export function SelectMenu<T extends string | number>({
   )
 }
 
-export const ChevronDown = () => (
-  <svg className="viz-drop__chev" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M4 6.5l4 4 4-4" />
-  </svg>
-)
 
-export const CheckIcon = () => (
-  <svg className="viz-menu__check" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3 8.5l3.5 3.5L13 5" />
-  </svg>
-)

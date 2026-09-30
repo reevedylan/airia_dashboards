@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Maximize } from '../primitives/icons'
 import { full, percent } from '../../lib/format'
 
 export type SortDir = 'asc' | 'desc'
@@ -200,7 +201,7 @@ export function RankTable({
 
       {matched > limit ? (
         <button type="button" className="viz-showall" onClick={() => setExpanded((v) => !v)}>
-          <ExpandIcon />
+          <Maximize size={13} />
           {expanded ? `Show top ${limit}` : `Show all ${matched}`}
         </button>
       ) : null}
@@ -208,8 +209,3 @@ export function RankTable({
   )
 }
 
-const ExpandIcon = () => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M6 2.5H2.5V6M10 13.5h3.5V10M13.5 6V2.5H10M2.5 10v3.5H6" />
-  </svg>
-)

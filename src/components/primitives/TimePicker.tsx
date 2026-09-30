@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Calendar } from './Calendar'
-import { CheckIcon } from './Dropdown'
+import { CalendarDays, Check, Search, X } from './icons'
 import { addDays, dayDate, spanDays, type Day } from '../../lib/day'
 
 /**
@@ -97,7 +97,7 @@ export function TimePicker<K extends string>({
           <div className="viz-tp__calhead">
             <span>Select a time range</span>
             <button type="button" className="viz-tp__x" aria-label="Close calendar" onClick={() => setCalendar(false)}>
-              <XIcon />
+              <X size={13} />
             </button>
           </div>
           <Calendar
@@ -149,7 +149,7 @@ export function TimePicker<K extends string>({
 
           <section className="viz-tp__quick" aria-label="Quick ranges">
             <label className="viz-tp__search">
-              <SearchIcon />
+              <Search size={14} />
               <input
                 type="search"
                 value={search}
@@ -169,7 +169,7 @@ export function TimePicker<K extends string>({
                   onClick={() => onQuick(q.key)}
                 >
                   {q.label}
-                  {q.key === value ? <CheckIcon /> : null}
+                  {q.key === value ? <Check className="viz-menu__check" size={14} /> : null}
                 </button>
               ))}
             </div>
@@ -217,7 +217,7 @@ function Field({
             aria-pressed={calendarOpen}
             onClick={onCalendar}
           >
-            <CalendarIcon />
+            <CalendarDays size={15} />
           </button>
         </span>
       </label>
@@ -248,22 +248,5 @@ export function parseDay(text: string, { today, minDay }: { today: Day; minDay: 
   return { day }
 }
 
-const CalendarIcon = () => (
-  <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
-    <rect x="2.25" y="3.25" width="11.5" height="10.5" rx="2" />
-    <path d="M2.25 6.5h11.5M5.5 2v2.5M10.5 2v2.5" />
-  </svg>
-)
 
-const SearchIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-    <circle cx="7" cy="7" r="4.5" />
-    <path d="M10.5 10.5L14 14" />
-  </svg>
-)
 
-const XIcon = () => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-    <path d="M4 4l8 8M12 4l-8 8" />
-  </svg>
-)

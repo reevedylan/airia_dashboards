@@ -17,6 +17,7 @@ import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateway
 import { NO_GATEWAY, grainOptions } from './lib/airia/aggregate'
 import { useApiKey, maskKey } from './lib/apiKey'
 import { useTheme } from './lib/theme'
+import { Moon, Sun, X } from './components/primitives/icons'
 
 /**
  * Colours are assigned to measures by identity, once — never by rank or array
@@ -281,7 +282,7 @@ export default function App() {
               <button type="button" onClick={clear}>Change key</button>
             </span>
           ) : null}
-          <ToolbarButton icon={<ThemeIcon />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+          <ToolbarButton icon={theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
             {theme === 'dark' ? 'Light' : 'Dark'}
           </ToolbarButton>
         </>
@@ -502,7 +503,7 @@ export default function App() {
                 ]}
               />
               {active ? (
-                <ToolbarButton size="sm" icon={<ClearIcon />} onClick={() => setIsolate(null)}>
+                <ToolbarButton size="sm" icon={<X size={13} />} onClick={() => setIsolate(null)}>
                   Show all {DIM_LABEL[active.dim]}
                 </ToolbarButton>
               ) : null}
@@ -695,15 +696,4 @@ function Head() {
   )
 }
 
-const ClearIcon = () => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-    <path d="M4 4l8 8M12 4l-8 8" />
-  </svg>
-)
 
-const ThemeIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
-    <circle cx="8" cy="8" r="3.1" />
-    <path d="M8 1.4v1.4M8 13.2v1.4M14.6 8h-1.4M2.8 8H1.4M12.7 3.3l-1 1M4.3 11.7l-1 1M12.7 12.7l-1-1M4.3 4.3l-1-1" />
-  </svg>
-)

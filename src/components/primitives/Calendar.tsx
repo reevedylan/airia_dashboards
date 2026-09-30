@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { addDays, addMonths, dayDate, monthOf, spanDays, type Day } from '../../lib/day'
+import { ChevronLeft, ChevronRight } from './icons'
 
 /**
  * A month-view calendar that picks a RANGE of civil days.
@@ -141,11 +142,11 @@ export function Calendar({
     <div className="viz-cal" role="dialog" aria-label={label}>
       <div className="viz-cal__head">
         <button type="button" className="viz-cal__nav" disabled={prevBlocked} aria-label="Previous month" onClick={() => stepMonth(-1)}>
-          <Chevron dir="left" />
+          <ChevronLeft size={14} />
         </button>
         <span className="viz-cal__month" aria-live="polite">{MONTH_YEAR.format(dayDate(`${month}-01`))}</span>
         <button type="button" className="viz-cal__nav" disabled={nextBlocked} aria-label="Next month" onClick={() => stepMonth(1)}>
-          <Chevron dir="right" />
+          <ChevronRight size={14} />
         </button>
       </div>
 
@@ -216,8 +217,3 @@ export function Calendar({
   )
 }
 
-const Chevron = ({ dir }: { dir: 'left' | 'right' }) => (
-  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d={dir === 'left' ? 'M10 3.5L5.5 8l4.5 4.5' : 'M6 3.5L10.5 8 6 12.5'} />
-  </svg>
-)

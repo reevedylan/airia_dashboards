@@ -1,6 +1,7 @@
 import { dayLabel } from './Calendar'
 import { DropTrigger, SelectMenu, type SelectMenuOption } from './Dropdown'
 import { TimePicker, type QuickRange } from './TimePicker'
+import { ChevronLeft, ChevronRight } from './icons'
 import { usePopover } from './popover'
 import type { Day } from '../../lib/day'
 
@@ -179,7 +180,7 @@ function Pager({
         disabled={atOldest}
         onClick={() => onStep(-1)}
       >
-        <ChevronLeft />
+        <ChevronLeft size={16} />
       </button>
       {/* Invisible copies of the widest labels of the same shape share the
           cell, so "Sept" being wider than "Mar" cannot nudge anything. */}
@@ -198,7 +199,7 @@ function Pager({
         disabled={atNow}
         onClick={() => onStep(1)}
       >
-        <ChevronRight />
+        <ChevronRight size={16} />
       </button>
     </div>
   )
@@ -243,14 +244,4 @@ export function ToolbarButton({ icon, children, onClick, size = 'md' }: ToolbarB
   )
 }
 
-const ChevronLeft = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M10 3.5L5.5 8l4.5 4.5" />
-  </svg>
-)
 
-const ChevronRight = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M6 3.5L10.5 8 6 12.5" />
-  </svg>
-)
