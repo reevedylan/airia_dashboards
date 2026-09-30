@@ -313,6 +313,12 @@ re-snaps a day-aligned anchor to the local-day grid, because those durations are
 them an hour across a DST change — visible on 7D, where the last bar is two
 hours wide.
 
+**A step forward onto the latest window returns to LIVE** (`anchor: null`),
+not to a fixed anchor. Back from live anchors at "a week before the click",
+so forward again lands on the click itself — a few seconds in the past by
+then — and treating that as history left › enabled on the latest window.
+`stepWindow()` returns null whenever a further step would pass now.
+
 ### A preset always means "ending now"
 
 Choosing a quick range discards the anchor and any custom range and jumps

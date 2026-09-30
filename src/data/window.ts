@@ -243,11 +243,21 @@ function clampAnchor(range: RangeKey, anchor: number | null): number | null {
  */
 export function stepWindow(range: RangeKey, from: number | null, dir: -1 | 1): number | null {
   const spec = RANGE_SPECS[range]
-  const at = from ?? Date.now()
-  const next = isCalendar(spec)
-    ? endOfDay(addMonths(dayOf(at), dir * spec.months))
-    : slideAnchor(at, dir * spec.count * spec.bucketMs)
-  if (next >= Date.now()) return null
+  const step = (t: number, d: number) => isCalendar(spec)
+    ? endOfDay(addMonths(dayOf(t), d * spec.months))
+    : slideAnchor(t, d * spec.count * spec.bucketMs)
+  const now = Date.now()
+  const next = step(from ?? now, dir)
+  /*
+   * Forward onto the live window returns to LIVE, not to a fixed anchor.
+   *
+   * A step back from live anchors at "a week before the click", so a step
+   * forward lands on the click itself — which by then is a few seconds in
+   * the past. Treating that as history left the › chevron enabled on what
+   * was plainly the latest window, and one more click did nothing visible.
+   * If a further step would pass now, this one IS the latest window.
+   */
+  if (next >= now || (dir > 0 && step(next, 1) >= now)) return null
   return clampAnchor(range, next)
 }
 
