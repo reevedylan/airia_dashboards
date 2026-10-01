@@ -45,6 +45,16 @@ export interface BarChartProps {
    * the part keeps its true size relative to the whole.
    */
   ghost?: { label: string; values: readonly (number | null)[] }
+  /**
+   * How the ghost is drawn.
+   *
+   * `bar` (the default) is a grey column BEHIND the stack, which only works
+   * when the ghost is the larger of the two — the whole behind an isolated
+   * part. When it can be smaller, as with last week against this week, a
+   * column behind is simply hidden. `tick` draws it as a short line across
+   * the bar at its height, ON TOP, so it reads whichever is larger.
+   */
+  ghostMark?: 'bar' | 'tick'
 }
 
 const PAD = { top: 10, right: 6, bottom: 2, left: 6 }
@@ -55,7 +65,7 @@ const MIN_SEG_PX = 1
 
 export function BarChart({
   x, series, height = 170, activeSeries = null,
-  formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX, ghost,
+  formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX, ghost, ghostMark = 'bar',
 }: BarChartProps) {
   const [ref, size] = useSize<HTMLDivElement>()
   const uid = useId()
@@ -180,12 +190,13 @@ export function BarChart({
           const v = s.points[hover]
           return { color: s.color, label: s.label, value: v == null ? '—' : formatValue(v), swatch: 'rect' as const }
         }),
-        {
+        // A total of one series only restates it.
+        ...(model.seriesMeta.length > 1 ? [{
           color: 'transparent',
           label: 'Total',
           value: formatValue(model.seriesMeta.reduce((acc, s) => acc + Math.max(0, s.points[hover] ?? 0), 0)),
           emphasis: true,
-        },
+        }] : []),
         ...(ghost && model.ghostPoints
           ? [{
               color: 'var(--viz-other)',
@@ -247,7 +258,7 @@ export function BarChart({
               />
             ) : null}
 
-            {ghost ? (
+            {ghost && ghostMark === 'bar' ? (
               <g aria-hidden="true">
                 {model.columns.map((col, i) =>
                   col.ghost <= 0.5 ? null : (
@@ -295,6 +306,23 @@ export function BarChart({
               y1={model.baseline} y2={model.baseline}
               className="viz-axis-line"
             />
+
+            {ghost && ghostMark === 'tick' ? (
+              <g aria-hidden="true">
+                {model.columns.map((col, i) =>
+                  col.ghost <= 0.5 ? null : (
+                    <line
+                      key={`t${i}`}
+                      x1={model.left + col.x - 3}
+                      x2={model.left + col.x + model.band.width + 3}
+                      y1={Math.round(model.baseline - col.ghost) + 0.5}
+                      y2={Math.round(model.baseline - col.ghost) + 0.5}
+                      className="viz-ghost-tick"
+                    />
+                  ),
+                )}
+              </g>
+            ) : null}
           </svg>
 
           {hover != null ? (

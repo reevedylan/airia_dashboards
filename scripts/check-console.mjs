@@ -8,8 +8,8 @@
  * nesting, state updates on unmounted components, failed prop types — and
  * none of it shows up in `tsc` or a screenshot. This clicks through each
  * range, both chart views, every grain, a typed and a calendar-drawn
- * range, both filters, every breakdown tab and the theme toggle, then
- * prints whatever was logged.
+ * range, both filters, every breakdown tab, the theme toggle and the
+ * weekly report, then prints whatever was logged.
  *
  * Exits non-zero if anything was.
  */
@@ -77,6 +77,14 @@ await cdp.evaluate(`(async () => {
   }
   click(document.querySelector('.viz-rank tbody tr .viz-rank__pick')); await s(600)
   click(document.querySelector('.viz-btn--sm')); await s(400)
+
+  // the weekly report: open it, step a week back and forward, copy, return
+  const nav = (i) => click(document.querySelectorAll('.page__navlink')[i])
+  nav(1); await s(2500)
+  click(document.querySelectorAll('.viz-anchor__step')[0]); await s(2500)
+  click(document.querySelectorAll('.viz-anchor__step')[1]); await s(1500)
+  click(document.querySelector('.report__copy button')); await s(600)
+  nav(0); await s(1500)
 })()`)
 await wait(1200)
 

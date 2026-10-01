@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Card, RankTable, StatTile, TimeRangeBar, ToolbarButton,
-  MultiSelect, Tabs, KeyGate, RANGE_SPANS, type RangeKey,
+  Card, RankTable, StatTile, TimeRangeBar, Toolbar, WindowPager, ToolbarButton,
+  MultiSelect, Tabs, KeyGate, RANGE_SPANS, spanLabel, type RangeKey,
 } from './components'
+import { WeeklyReport } from './WeeklyReport'
 import { ChartCard, type ChartView } from './ChartCard'
 import { series } from './theme/palette'
 import { bucketFormat, compact, currency, full, grainName, share } from './lib/format'
@@ -11,6 +12,7 @@ import {
   previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
   stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
   windowSpanMs, nativeGrain, windowDays, ZONE,
+  reportWeek, weekBefore, oldestReportBack, buildReport, reportMarkdown, type ReportFormat,
   type Dimension, type BreakdownRow, type History, type DayRange, type Scope, type GrainPick,
 } from './data/airia'
 import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateways'
@@ -72,6 +74,16 @@ export default function App() {
    * isolation follows.
    */
   const [grainPick, setGrainPick] = useState<number | null>(null)
+  /** Which page is showing: the dashboard, or the weekly report. */
+  const [view, setView] = useView()
+  /** How many completed weeks back the report is; 0 is the last one. */
+  const [reportBack, setReportBack] = useState(0)
+  /* The report is only folded once it has been OPENED, so a session that
+     never looks at it pays nothing for it — and kept after, so switching
+     back to the dashboard is not a re-fold just to drop it. */
+  const [reportOpened, setReportOpened] = useState(view === 'report')
+  useEffect(() => { if (view === 'report') setReportOpened(true) }, [view])
+  const week = useMemo(() => reportWeek(reportBack), [reportBack])
   const [recent, setRecent] = useRecentRanges()
   const [theme, setTheme] = useTheme()
 
@@ -86,7 +98,7 @@ export default function App() {
      far so it is already cached. A drawn range steps by its own span and is
      never what the page opens on, so it passes nothing. */
   const stepBack = custom ? null : stepWindow(range, anchor, -1)
-  const load = useAiriaLive(key, anchor, custom, grainFold, stepBack)
+  const load = useAiriaLive(key, anchor, custom, grainFold, stepBack, reportOpened ? week : null)
   /* The last good fold, HELD while the next one loads. Reading it only when
      the status is 'ready' is what used to drop the page back to the key gate
      mid-session, the moment an anchor reached past the cached rows. */
@@ -113,6 +125,44 @@ export default function App() {
     [userFilter, gatewayFilter],
   )
   const scoped = useMemo(() => (block ? seriesFor(block, scope) : null), [block, scope])
+
+  /* Who the figures are narrowed to, in words — for the banner, the
+     report's summary and its Markdown. */
+  const scopeLabel = userFilter.size === 0 && gatewayFilter.size === 0 ? null : [
+    userFilter.size === 0 ? null
+      : userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`,
+    gatewayFilter.size === 0 ? null
+      : gatewayFilter.size === 1 ? `gateway ${gwLabel([...gatewayFilter][0])}`
+      : `${gatewayFilter.size} gateways`,
+  ].filter(Boolean).join(' on ')
+
+  /* The report for the week ASKED FOR. A fold still describing the
+     previous week is not it — the last good report is held, dimmed, until
+     the right one lands, exactly as the dashboard holds its plots. */
+  const reportFormat: ReportFormat = useMemo(() => ({
+    money: (n: number) => currency(n),
+    day: (t: number) => REPORT_DAY.format(new Date(t)).replace(',', ''),
+    weekday: (t: number) => REPORT_WEEKDAY.format(new Date(t)),
+    count: (n: number) => full(n),
+    tokens: (n: number) => compact(n),
+    pct: (n: number) => share(n),
+    span: (w: DayRange) => spanLabel(w.from, w.to),
+    gateway: gwLabel,
+  }), [gwLabel])
+  const reportFresh = data?.meta.report?.from === week.from && data?.ranges.report != null && data.ranges.reportPrev != null
+  const freshReport = useMemo(
+    () => (reportFresh ? buildReport(data!.ranges.report!, data!.ranges.reportPrev!, scope, week, weekBefore(week)) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reportFresh, data, scope, week],
+  )
+  const heldReport = useRef(freshReport)
+  if (freshReport) heldReport.current = freshReport
+  const report = freshReport ?? heldReport.current
+  const markdown = useMemo(
+    () => (report ? reportMarkdown(report, reportFormat, { zone: ZONE, scopeLabel }) : null),
+    [report, reportFormat, scopeLabel],
+  )
+  const oldestBack = useMemo(() => oldestReportBack(), [])
   const rowsByDim = useMemo(() => ({
     model: block ? breakdown(block, 'model', scope) : [],
     user: block ? breakdown(block, 'user', scope) : [],
@@ -233,16 +283,9 @@ export default function App() {
     onChange: setGrainPick,
   }
 
-  const toolbar = (
-    <TimeRangeBar
-      /* Nothing is pressed while a custom range is showing: a preset and a
-         drawn range are alternatives, not layers. */
-      value={custom ? null : range}
-      onChange={selectPreset}
-      anchor={anchorControls}
-      picker={pickerControls}
-      grain={grainControls}
-      filters={
+  /* The filters are the same scope on both pages: pick a gateway on the
+     dashboard and the report is that gateway's week. */
+  const filters = (
         <>
           <MultiSelect
             label="Filter users"
@@ -272,8 +315,8 @@ export default function App() {
             />
           ) : null}
         </>
-      }
-      actions={
+  )
+  const actions = (
         <>
           {key ? (
             <span className="viz-keychip">
@@ -286,7 +329,36 @@ export default function App() {
             {theme === 'dark' ? 'Light' : 'Dark'}
           </ToolbarButton>
         </>
-      }
+  )
+
+  /* The report always covers one completed week, so its toolbar keeps the
+     filters and swaps the time picker and grain for a WEEK pager. The
+     actions stay where they are, so switching pages moves nothing on the
+     right. */
+  const toolbar = view === 'report' ? (
+    <Toolbar actions={actions}>
+      {filters}
+      <WindowPager
+        from={week.from}
+        to={week.to}
+        onStep={(dir) => setReportBack((b) => Math.min(oldestBack, Math.max(0, b - dir)))}
+        atNow={reportBack === 0}
+        atOldest={reportBack >= oldestBack}
+        past={reportBack > 0}
+        unit="week"
+      />
+    </Toolbar>
+  ) : (
+    <TimeRangeBar
+      /* Nothing is pressed while a custom range is showing: a preset and a
+         drawn range are alternatives, not layers. */
+      value={custom ? null : range}
+      onChange={selectPreset}
+      anchor={anchorControls}
+      picker={pickerControls}
+      grain={grainControls}
+      filters={filters}
+      actions={actions}
     />
   )
 
@@ -363,7 +435,7 @@ export default function App() {
 
   return (
     <div className="page">
-      <Head />
+      <Head view={view} onView={setView} />
       {toolbar}
 
       {/* A refetch holds the page rather than replacing it, so the only
@@ -388,15 +460,9 @@ export default function App() {
         </p>
       ) : null}
 
-      {userFilter.size > 0 || gatewayFilter.size > 0 ? (
+      {scopeLabel ? (
         <p className="page__scope">
-          Scoped to {[
-            userFilter.size === 0 ? null
-              : userFilter.size === 1 ? [...userFilter][0] : `${userFilter.size} users`,
-            gatewayFilter.size === 0 ? null
-              : gatewayFilter.size === 1 ? `gateway ${gwLabel([...gatewayFilter][0])}`
-              : `${gatewayFilter.size} gateways`,
-          ].filter(Boolean).join(' on ')} ·
+          Scoped to {scopeLabel} ·
           {' '}everything below is recomputed against that traffic alone.
           <button
             type="button"
@@ -407,6 +473,16 @@ export default function App() {
         </p>
       ) : null}
 
+      {view === 'report' ? (
+        <WeeklyReport
+          report={report}
+          loading={!freshReport || busy}
+          format={reportFormat}
+          scopeLabel={scopeLabel}
+          zone={ZONE}
+          markdown={freshReport ? markdown : null}
+        />
+      ) : (<>
       <div className="strip" data-loading={busy ? '' : undefined}>
         <StatTile label="Token spend" value={currency(scoped.totals.cost)} delta={vsPrevious(scoped.totals.cost, prev.spend)} />
         <StatTile label="Tokens" value={compact(scoped.totals.tokens)} delta={vsPrevious(scoped.totals.tokens, prev.tokens)} />
@@ -583,6 +659,7 @@ export default function App() {
           />
         </Card>
       </div>
+      </>)}
 
       <p className="page__note">
         {data!.meta.source} executions only · {full(data!.meta.rowCount)} of{' '}
@@ -609,6 +686,10 @@ const toggle = (value: string) => (prev: Set<string>): Set<string> => {
   else next.add(value)
   return next
 }
+
+/** "Tue 22 Sept" — a report day, in the zone its buckets were aligned to. */
+const REPORT_DAY = new Intl.DateTimeFormat('en-GB', { timeZone: ZONE, weekday: 'short', day: 'numeric', month: 'short' })
+const REPORT_WEEKDAY = new Intl.DateTimeFormat('en-GB', { timeZone: ZONE, weekday: 'long' })
 
 /** How many recently used absolute ranges the picker remembers. */
 const RECENT_MAX = 4
@@ -688,10 +769,54 @@ function ProgressBar({ value }: { value: number | null }) {
   )
 }
 
-function Head() {
+type View = 'dashboard' | 'report'
+
+/**
+ * The page on show, kept in the address as `#report`, so the report can be
+ * bookmarked or shared and the back button moves between the two. A hash
+ * rather than a path: the page is served as one file by two different
+ * proxies, and neither has to know about routes.
+ */
+function useView(): [View, (v: View) => void] {
+  const read = (): View => (globalThis.location?.hash === '#report' ? 'report' : 'dashboard')
+  const [view, set] = useState<View>(read)
+  useEffect(() => {
+    const on = () => set(read())
+    globalThis.addEventListener('hashchange', on)
+    return () => globalThis.removeEventListener('hashchange', on)
+  }, [])
+  const go = useCallback((v: View) => {
+    if (v === read()) return
+    globalThis.location.hash = v === 'report' ? 'report' : 'dashboard'
+  }, [])
+  return [view, go]
+}
+
+/**
+ * Title and page nav. The nav lives here rather than in the toolbar: the
+ * toolbar narrows the data, the nav changes the page, and putting the two
+ * in one row would blur which is which.
+ */
+function Head({ view, onView }: { view?: View; onView?: (v: View) => void }) {
+  const tab = (v: View, label: string) => (
+    <a
+      href={v === 'report' ? '#report' : '#dashboard'}
+      className="page__navlink"
+      aria-current={view === v ? 'page' : undefined}
+      onClick={(e) => { e.preventDefault(); onView?.(v) }}
+    >
+      {label}
+    </a>
+  )
   return (
     <header className="page__head">
       <h1>Gateway usage</h1>
+      {view && onView ? (
+        <nav className="page__nav" aria-label="Pages">
+          {tab('dashboard', 'Dashboard')}
+          {tab('report', 'Weekly report')}
+        </nav>
+      ) : null}
     </header>
   )
 }

@@ -106,8 +106,7 @@ export function TimeRangeBar({ value, onChange, anchor, picker, grain, filters, 
   const span = spanLabel(anchor.window.from, anchor.window.to)
 
   return (
-    <div className="viz-toolbar">
-      <div className="viz-toolbar__controls">
+    <Toolbar actions={actions}>
         {filters}
 
         <div className="viz-dropwrap viz-time" ref={p.root}>
@@ -151,25 +150,58 @@ export function TimeRangeBar({ value, onChange, anchor, picker, grain, filters, 
           />
         ) : null}
 
-        <Pager {...anchor} live={live} range={value} span={span} />
-      </div>
+        <WindowPager
+          from={anchor.window.from}
+          to={anchor.window.to}
+          onStep={anchor.onStep}
+          atNow={anchor.atNow}
+          atOldest={anchor.atOldest}
+          past={!live}
+          unit={anchor.custom || value == null ? 'range' : RANGE_SPANS[value]}
+        />
+    </Toolbar>
+  )
+}
+
+/**
+ * The toolbar's two zones: controls that wrap among THEMSELVES, and actions
+ * that keep the right edge. Shared by every view, so the actions sit in the
+ * same place whichever one is showing.
+ */
+export function Toolbar({ children, actions }: { children: React.ReactNode; actions?: React.ReactNode }) {
+  return (
+    <div className="viz-toolbar">
+      <div className="viz-toolbar__controls">{children}</div>
       {actions ? <div className="viz-toolbar__actions">{actions}</div> : null}
     </div>
   )
 }
 
+export interface WindowPagerProps {
+  /** The window on screen, as civil days. */
+  from: string
+  to: string
+  onStep: (direction: -1 | 1) => void
+  /** Nothing newer to step to. */
+  atNow: boolean
+  /** Nothing older is retained. */
+  atOldest?: boolean
+  /** Showing something other than the latest window. */
+  past: boolean
+  /** What one step is called: "7 days", "week", "range". */
+  unit: string
+}
+
 /**
  * Previous window, the dates on screen, next window.
  *
- * Present on the live window too, where it says which days "Last 7 days"
- * covers — so stepping back changes a label, never the layout.
+ * Present on the latest window too, where it says which days are covered —
+ * so stepping back changes a label, never the layout.
  */
-function Pager({
-  onStep, atNow, atOldest, window: win, custom, live, range, span,
-}: AnchorControls & { live: boolean; range: RangeKey | null; span: string }) {
-  const unit = custom || range == null ? 'range' : RANGE_SPANS[range]
+export function WindowPager({ from, to, onStep, atNow, atOldest, past, unit }: WindowPagerProps) {
+  const span = spanLabel(from, to)
   return (
-    <div className="viz-pager" role="group" aria-label="Window position" data-past={live ? undefined : ''}>
+    <div className="viz-pager" role="group" aria-label="Window position" data-past={past ? '' : undefined}>
       {/* Stepping past retention would show a window the source has
           already expired. */}
       <button
@@ -186,7 +218,7 @@ function Pager({
           cell, so "Sept" being wider than "Mar" cannot nudge anything. */}
       <span className="viz-pager__label">
         <span>{span}</span>
-        {widestLabels(win.from, win.to).map((s) => (
+        {widestLabels(from, to).map((s) => (
           <span key={s} className="viz-drop__sizer" aria-hidden="true">{s}</span>
         ))}
       </span>
@@ -215,7 +247,7 @@ function widestLabels(from: string, to: string): string[] {
 }
 
 /** "22 Sept 2026", or "4 Mar – 3 Jun 2026" — the year said once. */
-function spanLabel(from: string, to: string): string {
+export function spanLabel(from: string, to: string): string {
   if (from === to) return dayLabel(from)
   const start = from.slice(0, 4) === to.slice(0, 4)
     ? dayLabel(from).replace(/ \d{4}$/, '')

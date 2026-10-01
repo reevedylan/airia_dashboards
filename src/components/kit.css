@@ -340,6 +340,10 @@
 /* The unfiltered whole, behind an isolated series. Faint enough to read as
    context rather than data, and never coloured — it is not a series. */
 .viz-ghost-bar { fill: var(--viz-other); opacity: 0.22; }
+/* The ghost as a tick across the bar, drawn on top. Ink rather than the
+   de-emphasis grey, so it holds its contrast against a filled bar in both
+   themes. */
+.viz-ghost-tick { stroke: var(--viz-text-primary); stroke-width: 2; stroke-linecap: round; }
 
 /* --- selectable rank rows ------------------------------------------------ */
 

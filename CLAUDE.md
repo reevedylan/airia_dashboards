@@ -13,8 +13,10 @@ src/components/ the reusable kit
 src/data/       window.ts  which instants we are looking at, and the zone
                 live.ts    fetching, the row cache, the backfill
                 fold.ts    fact table to series and breakdowns
+                report.ts  the weekly report, and its Markdown
                 airia.ts   barrel, so App imports one path
 src/ChartCard.tsx  the dashboard's measure card, composed from the kit
+src/WeeklyReport.tsx  the weekly report page
 src/App.tsx     the dashboard
 scripts/        the four gates, plus probe / shoot / measure-load
 ```
@@ -464,6 +466,114 @@ moves everything beside it.** So:
   filling a control with it swamps the dark toolbar. Tint a border, or use
   `--viz-surface-active` with focus-coloured text, when a marker has to
   read the same in both.
+
+## The weekly report
+
+A second page, `#report`, reached from the nav beside the title
+(**Dashboard | Weekly report**). The dashboard is still what the page opens
+on. It covers one **completed Monday–Sunday week** in `ZONE` against the
+week before, and reads **top to bottom like a one-page memo**: a headline,
+then short sections that each open with their takeaway. **Copy as
+Markdown** puts the same thing, with the complete lists, on the clipboard.
+
+### It is a memo, not a second dashboard
+
+The first version was a grid of KPI tiles and cards with a table in each,
+and it read as a second dashboard — an invitation to explore rather than a
+statement of what happened. So `WeeklyReport.tsx` deliberately does NOT
+compose `Card`, `StatTile` or the grid: one column at ~760px, sections
+parted by whitespace and a hairline, three rows of evidence at most, long
+lists cut to "and N more" (complete in the Markdown). Don't bring the cards
+back.
+
+### Takeaway headings are rules, not prose
+
+Every section heading comes from `takeaways()` in `data/report.ts`: fixed
+templates in priority order, first match wins, over thresholds held in one
+`RULES` object (flat under 2%, a peak day at 40%, "drove" at 50%, one
+provider "carried" at 90%). No model writes them, so the same
+week always reads the same way and nothing is sent anywhere. Reading just
+the headings top to bottom is the summary — which is why there is no
+separate bullet list; it would say everything twice.
+
+- **Every number in a heading is in the rows beneath it.** Percentages, not
+  "two-thirds", which would sometimes round the wrong way.
+- **A heading says OUT OF how many, and a change says OF WHAT — and no
+  more.** "Spread across 23 users" was read as "only 23 people used it",
+  and "81% of the decrease" left a reader asking: decrease of what? The
+  fix that followed overcorrected into "accounts for 81% of the $9,859.93
+  fall in spend since last week", which was clear and too long. Settled
+  on: "1 of 7 users drove 66% of spend", "claude-opus-5 was 86% of spend
+  (10 models used)", "claude-opus-5 drove 90% of the rise in token spend".
+- **Never a date in a heading or a note.** The whole report is one week,
+  named once at the top; repeating it, or "since last week", in every line
+  is noise. The amounts live in the rows, not the headings.
+- **A short note only where something needs defining.** `sectionNotes()`:
+  who counts as a user (at least one gateway call; the service key counts
+  as one), the two totals behind the changes, and what "new" and "no
+  longer used" mean. Models get none — the heading carries the count. The
+  movers show name, bar and change only; a "last week → this week" column
+  was tried and cut as clutter — the Markdown table still has both weeks.
+- **A real cost is never shown as $0.00.** `amount()` writes `<$0.01` for
+  anything above zero that rounds to nothing; "was $0.00" for a model that
+  was used read as a contradiction.
+- **Neutral verbs** — drove, was, accounts for — and never a judgement.
+- **Never a person's name in a heading.** "One user drove 66%"; the rows
+  name them. The service key is "The standard key": not a person.
+- **A mover can explain MORE than the net change** when others fell. "104%
+  of the increase" is nonsense to read, so it becomes "rose $X, more than
+  the week's net increase".
+- Tested against synthetic weeks as well as real ones — a fall, flat,
+  evenly spread, the service key on top, up from nothing, and empty — since
+  one real week only exercises one branch of each rule. The empty week
+  first read "Spend rose $0.00, spread across 0 models".
+
+### The data behind it
+
+- **Completed, not rolling.** A rolling seven days changes on every
+  refresh, so two people an hour apart would report different figures.
+  `reportWeek(back)` in `data/window.ts` is the one definition.
+- **Two FULL windows, not a window and a comparison.** `aggregate()` folds
+  `report` and `reportPrev` as windows in the same pass as everything else,
+  at a daily grain so index i is the same weekday in both. `PreviousWindow`
+  holds totals per (user, gateway), which cannot say which MODELS last week
+  had — and "new" and "not used" need exactly that.
+- **Folded only once opened**, and kept after, so a session that never
+  opens it pays nothing and switching back is not a re-fold.
+- **The filters apply; the time controls do not.** Pick a gateway and the
+  report is that gateway's week. The toolbar swaps time and grain for a
+  week pager, and the actions do not move.
+- **It describes the week and nothing else.** No forecast and no budget.
+  Cache savings were considered and left out on purpose: a write only pays
+  off if it is read enough times before a five-minute expiry, and the rows
+  cannot say whether or how often it was, so any figure would be a guess.
+- **A dimension present in EITHER week belongs in a comparison.** The
+  provider split first listed only this week's providers, and last week's
+  column summed short of last week's total by the Bedrock spend that had
+  stopped. Movers and "not used" use the union for the same reason.
+- **Trim to the report too.** While the dashboard is stepped into the past,
+  the report week is LATER than its window, and `rowsBetween` trimming at
+  the anchor would hand the report an empty week that it would describe,
+  confidently, as nothing spent.
+
+### Visuals
+
+- **Every bar is neutral.** Spend bars in the sequential ramp; movers as a
+  diverging bar from a centre line in ONE colour — direction and size,
+  never red and green; the provider split as one stacked bar in the
+  validated slot order (no yellow), names and shares written beside it.
+- **Last week is a TICK on the daily chart, not a ghost column.**
+  `BarChart`'s default ghost is a grey column behind the bar, which only
+  works when the ghost is the larger — the whole behind an isolated part.
+  Last week is often smaller, and the first version hid it completely
+  behind every bar while the legend promised a comparison.
+  `ghostMark="tick"` draws it as a line across the bar, on top. A
+  single-series `BarChart` tooltip also drops its "Total" row, which only
+  restated the one value.
+
+Verified against the dashboard: the same Monday–Sunday drawn as a custom
+range gives identical spend, tokens, executions and change, with and
+without a gateway scope.
 
 ## Never go back to the key gate mid-session
 

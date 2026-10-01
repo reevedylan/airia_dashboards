@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { aggregate, earliestBoundary, prefetchBoundary, SERVICE_KEY,
          type AggregateResult, type Grains, type RangeMap, type RangeName, type RawRow } from '../lib/airia/aggregate'
 import { fetchAll, probe, AuthError, BACKGROUND_CONCURRENCY, type Progress } from '../lib/airia/fetchAll'
-import { ZONE, DAY_MS, RETENTION_MS, customSpec, customPrevFrom, type DayRange } from './window'
+import { ZONE, DAY_MS, RETENTION_MS, customSpec, customPrevFrom, reportSpec, type DayRange } from './window'
 
 /**
  * How much older history one background step fetches.
@@ -40,6 +40,9 @@ export interface AiriaMeta {
   zone: string
   /** False when the window is anchored in the past rather than ending now. */
   live: boolean
+  /** The report week this fold includes, if any — so the report can tell a
+   *  fold for its week from one still showing the week before. */
+  report: DayRange | null
   /** Rows kept by the source filter — what the figures are built from. */
   rowCount: number
   /** Rows fetched, before the source filter. */
@@ -151,6 +154,12 @@ export function useAiriaLive(
    * the first click back is already cached; see below.
    */
   stepBack: number | null = null,
+  /**
+   * A weekly-report week to fold as well, or null. Passed once the report
+   * has been opened and kept after, so going back to the dashboard is not
+   * a re-fold without it.
+   */
+  report: DayRange | null = null,
 ): LoadState {
   const [state, setState] = useState<LoadState>({ status: 'idle', data: null })
   const run = useRef(0)
@@ -228,7 +237,9 @@ export function useAiriaLive(
           ? { [grain.window]: grain.bucketMs }
           : undefined
         const customFrom = spec ? customPrevFrom(spec) : Infinity
-        const needFrom = Math.max(Math.min(earliestBoundary(at, ZONE, grains), customFrom), floor)
+        const rspec = report ? reportSpec(report) : null
+        const reportFrom = rspec ? rspec.previous.from : Infinity
+        const needFrom = Math.max(Math.min(earliestBoundary(at, ZONE, grains), customFrom, reportFrom), floor)
 
         if (cache.current?.key !== key) {
           cache.current = null
@@ -299,11 +310,15 @@ export function useAiriaLive(
 
         /* One bucket past the anchor: the widest bucket is a day, and the
            one containing `at` may end after it. */
-        const rows = rowsBetween(cache.current!.rows, needFrom, at + DAY_MS)
+        /* ...or to the end of the report week, which is later than the
+           window whenever the dashboard has been stepped into the past.
+           Trimming at the anchor then would hand the report an empty
+           week and it would say, confidently, that nothing was spent. */
+        const rows = rowsBetween(cache.current!.rows, needFrom, Math.max(at, rspec?.current.to ?? 0) + DAY_MS)
         show({ message: 'Aggregating…' })
         // Yield a frame so the message paints before a synchronous fold.
         await new Promise((r) => requestAnimationFrame(() => r(null)))
-        const agg: AggregateResult = aggregate(rows, { now: at, zone: ZONE, source: 'Gateway', custom: spec, grains })
+        const agg: AggregateResult = aggregate(rows, { now: at, zone: ZONE, source: 'Gateway', custom: spec, grains, report: rspec })
         if (!live()) return
 
         held.current = {
@@ -312,6 +327,7 @@ export function useAiriaLive(
             now: at, from: needFrom, to: at,
             /** True when the window ends at the wall clock rather than an anchor. */
             live: anchor == null,
+            report,
             source: 'Gateway',
             zone: ZONE,
             rowCount: agg.stats.rowCount,
@@ -408,7 +424,7 @@ export function useAiriaLive(
     // Depends on the custom range's ENDS and the grain's VALUE, not their
     // object identities, so a re-render with an equal one does not refold.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, anchor, custom?.from, custom?.to, grain?.window, grain?.bucketMs])
+  }, [key, anchor, custom?.from, custom?.to, grain?.window, grain?.bucketMs, report?.from])
 
   return state
 }

@@ -357,8 +357,25 @@ export interface RangeBlock {
   previous: PreviousWindow
 }
 
-/** The five presets, plus the custom window when one is selected. */
-export type RangeMap = Record<RangeName, RangeBlock> & { custom?: RangeBlock }
+/**
+ * The five presets, plus the custom window when one is selected, plus the
+ * weekly report's two weeks once the report has been opened.
+ */
+export type RangeMap = Record<RangeName, RangeBlock> & {
+  custom?: RangeBlock
+  /** The report's week. */
+  report?: RangeBlock
+  /** The week before it, as a FULL window rather than comparison totals:
+   *  "new this week" and "not used this week" need to know which models,
+   *  users and gateways it had, not just what it cost. */
+  reportPrev?: RangeBlock
+}
+
+/** The weekly report's two windows, folded alongside everything else. */
+export interface ReportSpec {
+  current: CustomSpec
+  previous: CustomSpec
+}
 
 export interface AggregateResult {
   ranges: RangeMap
@@ -567,7 +584,7 @@ const emptyFact = () => ({
  */
 export function aggregate(
   rows: readonly RawRow[],
-  opts: { now: number; zone: string; source?: string | null; custom?: CustomSpec | null; grains?: Grains },
+  opts: { now: number; zone: string; source?: string | null; custom?: CustomSpec | null; grains?: Grains; report?: ReportSpec | null },
 ): AggregateResult {
   /*
    * The API returns every execution type — Data Source and Pipeline runs
@@ -639,6 +656,15 @@ export function aggregate(
     .map(([key, spec]) => build(key, spec.bucketMs, windowFor(Z, spec, opts.now)))
     .concat(opts.custom
       ? [build('custom', opts.custom.bucketMs, customWindow(Z, opts.custom), opts.custom.to)]
+      : [])
+    /* The report's weeks are two more windows in the same pass — not a
+       second pipeline, so the filters and breakdowns work on them as on
+       any other. */
+    .concat(opts.report
+      ? [
+          build('report', opts.report.current.bucketMs, customWindow(Z, opts.report.current), opts.report.current.to),
+          build('reportPrev', opts.report.previous.bucketMs, customWindow(Z, opts.report.previous), opts.report.previous.to),
+        ]
       : [])
 
   const providers: Record<string, number> = {}

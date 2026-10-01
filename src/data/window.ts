@@ -9,9 +9,9 @@
 
 import {
   isCalendar, makeZone, customWindow, grainFor, grainOptions, windowFor, withGrain, RANGE_SPECS,
-  type CustomSpec,
+  type CustomSpec, type ReportSpec,
 } from '../lib/airia/aggregate'
-import { addDays, addMonths, spanDays, type Day } from '../lib/day'
+import { addDays, addMonths, dayDate, spanDays, type Day } from '../lib/day'
 import type { RangeKey } from '../components'
 
 /** A custom window as the calendar produces it: two civil days, inclusive. */
@@ -292,3 +292,42 @@ export function stepRange(range: DayRange, dir: -1 | 1): DayRange {
 
 /** The comparison period a custom range is measured against. */
 export const customPrevFrom = (spec: CustomSpec): number => customWindow(Z, spec).prevFrom
+
+
+/* ---------------------------------------------------------- report week -- */
+
+/**
+ * A completed Monday–Sunday week, `back` weeks before the most recent one.
+ *
+ * COMPLETED, not rolling: a rolling seven days changes every time the page
+ * is refreshed, so two people opening the report an hour apart would see
+ * different figures. A finished week is the same for everyone, whenever
+ * they look. Civil days in `ZONE`, so "Monday" is the tenant's Monday.
+ */
+export function reportWeek(back = 0): DayRange {
+  const today = dayOf(Date.now())
+  const sinceMonday = (dayDate(today).getUTCDay() + 6) % 7
+  const thisMonday = addDays(today, -sinceMonday)
+  const from = addDays(thisMonday, -7 * (back + 1))
+  return { from, to: addDays(from, 6) }
+}
+
+/** The week before a report week — what it is compared against. */
+export const weekBefore = (w: DayRange): DayRange => ({ from: addDays(w.from, -7), to: addDays(w.to, -7) })
+
+/**
+ * The furthest back a report may go: its COMPARISON week has to be inside
+ * retention too, or "new this week" would list everything whose history
+ * had merely expired.
+ */
+export function oldestReportBack(): number {
+  const floor = dayOf(retentionFloor())
+  let back = 0
+  while (weekBefore(reportWeek(back + 1)).from >= floor) back++
+  return back
+}
+
+/** Both weeks as fold specs, at a daily grain — seven bars, one per day. */
+export function reportSpec(week: DayRange): ReportSpec {
+  return { current: customSpec(week, DAY_MS), previous: customSpec(weekBefore(week), DAY_MS) }
+}
