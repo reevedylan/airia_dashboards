@@ -85,11 +85,14 @@ export function MultiSelect({
 
       {open ? (
         <div className="viz-msel__pop" role="dialog" aria-label={label} ref={pop}>
-          <p className="viz-menu__head">{label}</p>
+          {/* No visible heading: the trigger says "All users" and the box
+              says "Search users…", so a "Filter users" title only repeated
+              them. It stays as the accessible name. */}
           <input
             ref={search}
             className="viz-msel__search"
             type="search"
+            aria-label={label}
             value={query}
             placeholder={placeholder}
             onChange={(e) => setQuery(e.target.value)}
@@ -118,6 +121,14 @@ export function MultiSelect({
             )}
           </div>
 
+          {/*
+            No "Select all". An empty selection already MEANS all, so ticking
+            every box was a second way to say nothing. Selecting the matches
+            of a SEARCH is different — it narrows, e.g. everyone at one
+            domain — so that offer appears only while a search hides some
+            options, and it adds to what is already picked rather than
+            replacing it.
+          */}
           <div className="viz-msel__foot">
             <button
               type="button"
@@ -125,16 +136,18 @@ export function MultiSelect({
               disabled={selected.size === 0}
               onClick={() => onChange(new Set())}
             >
-              Clear ({allLabel.toLowerCase()})
+              Clear all
             </button>
-            <button
-              type="button"
-              className="viz-msel__action"
-              disabled={shown.length === 0}
-              onClick={() => onChange(new Set(shown))}
-            >
-              {query.trim() === '' ? 'Select all' : `Select ${shown.length} shown`}
-            </button>
+            {query.trim() !== '' && shown.length > 0 && shown.length < options.length ? (
+              <button
+                type="button"
+                className="viz-msel__action"
+                disabled={shown.every((o) => selected.has(o))}
+                onClick={() => onChange(new Set([...selected, ...shown]))}
+              >
+                Select {shown.length} shown
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
