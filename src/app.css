@@ -71,6 +71,8 @@ body {
   color: var(--viz-text-muted);
   max-width: 62ch;
 }
+/* The report is a centred column (see .report); its note lines up with it. */
+.page__note[data-view='report'] { max-width: 760px; margin-left: auto; margin-right: auto; }
 
 /* KPI strip above the charts */
 /* auto-fit rather than fixed breakpoints, so the tiles stay evenly balanced

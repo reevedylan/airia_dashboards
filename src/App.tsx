@@ -669,7 +669,9 @@ export default function App() {
       </div>
       </>)}
 
-      <p className="page__note">
+      {/* Under the report it takes the report's column, not the page's left
+          edge, or it hangs off to the side of a centred memo. */}
+      <p className="page__note" data-view={view}>
         {data!.meta.source} executions only · {full(data!.meta.rowCount)} of{' '}
         {full(data!.meta.fetchedCount)} fetched rows, {full(data!.meta.amountsReconciled)} of
         which reconcile exactly
