@@ -215,6 +215,9 @@ export interface BreakdownRow {
   outputRate: number | null
   shareTokens: number | null
   shareSpend: number | null
+  /** Spend in the window immediately before this one, under the same
+   *  scopes. Zero means this row had none there: it is new. */
+  prevSpend: number
 }
 
 /** The dictionary and fact column a dimension reads. */
@@ -223,6 +226,13 @@ const axis = (block: RangeBlock, dim: Dimension) =>
   : dim === 'user' ? { labels: block.users, idx: block.facts.u }
   : dim === 'gateway' ? { labels: block.gateways, idx: block.facts.g }
   : { labels: block.providers, idx: block.facts.p }
+
+/** The comparison window's column for the same dimension. */
+const prevAxis = (block: RangeBlock, dim: Dimension) =>
+  dim === 'model' ? block.previous.m
+  : dim === 'user' ? block.previous.u
+  : dim === 'gateway' ? block.previous.g
+  : block.previous.p
 
 /** Totals per model, user, gateway or provider, within the current scopes. */
 export function breakdown(block: RangeBlock, dim: Dimension, scope: Scope = {}): BreakdownRow[] {
@@ -243,6 +253,19 @@ export function breakdown(block: RangeBlock, dim: Dimension, scope: Scope = {}):
     a.ex += f.ex[i]
   }
 
+  // The same scopes over the comparison window, so a row's change is that
+  // slice's change and not the tenant's.
+  const p = block.previous
+  const pIdx = prevAxis(block, dim)
+  const okUser = admitted(block.users, scope.users)
+  const okGateway = admitted(block.gateways, scope.gateways)
+  const prevSpend = labels.map(() => 0)
+  for (let i = 0; i < p.u.length; i++) {
+    if (okUser && !okUser.has(p.u[i])) continue
+    if (okGateway && !okGateway.has(p.g[i])) continue
+    prevSpend[pIdx[i]] += p.spend[i]
+  }
+
   const rows = labels.map((key, i) => {
     const a = acc[i]
     const tokensIn = a.tIn + a.tCa
@@ -255,6 +278,7 @@ export function breakdown(block: RangeBlock, dim: Dimension, scope: Scope = {}):
       executions: a.ex,
       inputRate: a.tIn > 0 ? (a.cIn / a.tIn) * 1_000_000 : null,
       outputRate: a.tOu > 0 ? (a.cOu / a.tOu) * 1_000_000 : null,
+      prevSpend: prevSpend[i],
     }
   }).filter((r) => r.executions > 0)
 

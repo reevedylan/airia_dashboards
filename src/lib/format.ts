@@ -30,6 +30,19 @@ export const share = (fraction: number | null | undefined, digits = 1): string =
   return percent(fraction, digits)
 }
 
+/**
+ * A change, signed and always a percentage: "+60%", "−70%", "+1,240%".
+ *
+ * Never a multiplier, unlike the KPI tiles' `delta()`. The breakdown reads
+ * down one column, and "12×" among percentages cannot be compared at a
+ * glance. Under ten per cent keeps a decimal, so a small move is not "0%".
+ */
+export const signedPercent = (fraction: number): string => {
+  const pct = Math.abs(fraction * 100)
+  const digits = pct < 10 ? pct.toFixed(1) : FULL.format(Math.round(pct))
+  return `${fraction < 0 ? '\u2212' : '+'}${digits}%`
+}
+
 /* ---------------------------------------------------------------- dates -- */
 
 /** How wide a span is, which drives tick density and label shape. */

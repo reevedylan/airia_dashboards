@@ -37,7 +37,7 @@ export type { LineChartProps, LineSeries } from './charts/LineChart'
 export { BarChart } from './charts/BarChart'
 export type { BarChartProps, BarSeries } from './charts/BarChart'
 export { RankTable } from './charts/RankTable'
-export type { RankTableProps, RankRow, RankColumn, SortDir } from './charts/RankTable'
+export type { RankTableProps, RankRow, RankDetail } from './charts/RankTable'
 export { Sparkline } from './charts/Sparkline'
 export type { SparklineProps } from './charts/Sparkline'
 

@@ -271,8 +271,9 @@ exactly that way, and the whole change was a column, a dictionary, an
 `axis()` entry and a filter clause. `providerType` followed the same path. It is its
 own column rather than derived from the model name because one model can be
 served by several providers (Anthropic direct and Bedrock, say). Like model,
-provider is a view you can isolate, not a scope, so it stays out of
-`PreviousWindow`.
+provider is a view you can isolate, not a scope — but both are columns of
+`PreviousWindow` all the same, because the breakdown table reports each
+row's change (see **The breakdown table**).
 
 Two things bite when adding one:
 
@@ -284,9 +285,9 @@ Two things bite when adding one:
   keyed by every SCOPE — now (user, gateway) pairs rather than per-user
   scalars — because a scoped window compared against an unscoped baseline
   reports a change that never happened. Types do not catch this: the old
-  code indexed `spend[i]` by user position and kept compiling. Model stays
-  out of it on purpose: isolate is a view, not a scope, and the tiles
-  ignore it.
+  code indexed `spend[i]` by user position and kept compiling. Model and
+  provider are columns too, for the breakdown's per-row change; the tiles
+  sum over them, so they stay views, not scopes.
 
 Verified by partitioning: the previous window summed over every gateway,
 and again over every user, both equal the unpartitioned total exactly.
@@ -782,9 +783,36 @@ not an absolute `onChange(nextSet)`. Computing the next Set from the `selected`
 prop loses a toggle when two land in the same render batch, because both read
 the same stale value — caught with two programmatic clicks in one tick.
 
-`RankTable` is keyed by dimension in `App.tsx` so switching tabs remounts it.
-Without that, a sort by "out $/M" on models silently carried over to users and
-overrode the documented spend-descending default.
+`RankTable` is keyed by dimension in `App.tsx` so switching tabs remounts it
+and starts on page one. (It used to carry a column sort across tabs — a sort
+by "out $/M" on models silently applied to users too.)
+
+## The breakdown table
+
+Laid out like Google Trends' query tables: rank, name, a bar for its share
+of the total, spend in dollars, and the change. Tokens, shares, rates, executions and
+last period's spend are in the hover readout and the table twin, NOT in
+columns. It used to show eight columns, which was too much to read at a
+glance. Ten rows a page, with a "1–10 of N" pager.
+
+- **Change is spend against the same slice of the previous window**,
+  always a signed percentage ("+1,240%", never "12x" like the tiles), so
+  the column compares at a glance. `breakdown()` reads `prevSpend` from
+  `PreviousWindow` under the same scopes.
+- **New means no spend in the previous window.** A label seen only
+  there joins the dictionary but has no facts, so it is never listed.
+- **No comparison means a dash, never "new".** When the previous
+  window is past retention, every row would otherwise claim to be new.
+- **Neutral, like the tiles**: an arrow and a sign, no red or green.
+- **The bar is a share of the TOTAL, never of the largest row**, with the
+  percentage beside it. Scaled to the largest, the top row always filled
+  its track and read as 100% of spend.
+- **The bar column takes the slack.** The name column shrinks to its
+  longest name, so names sit beside their bars instead of a card-width
+  gap away from the figures.
+- A short last page is padded to full height so the pager does not move
+  under the pointer, and below a 560px card the bar drops out so names
+  keep their room.
 
 ## Isolating a model
 

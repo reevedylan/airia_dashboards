@@ -323,18 +323,25 @@ export interface Facts {
  * alone. It has to be: a scope recomputes the whole page including the
  * comparison, so per-user scalars could not answer "the previous window for
  * this user ON THIS GATEWAY" and the tiles would have compared a filtered
- * window against an unfiltered baseline. Model is deliberately absent:
- * isolate is a view, not a scope, and the tiles ignore it.
+ * window against an unfiltered baseline.
+ *
+ * Model and provider are columns too, though neither is a scope: the
+ * breakdown table shows each row's change against this window, and calls
+ * one new when it had no spend here at all. The tiles sum over them
+ * and are unaffected.
  *
  * Still far smaller than a second fact table — no buckets, and only the
- * (user, gateway) pairs that actually occur.
+ * (user, gateway, model, provider) combinations that actually occur.
  */
 export interface PreviousWindow {
   from: number
   to: number
-  /** Parallel arrays: `u` indexes `users`, `g` indexes `gateways`. */
+  /** Parallel arrays: `u` indexes `users`, `g` `gateways`, `m` `models`,
+   *  `p` `providers` — the same dictionaries as the facts. */
   u: number[]
   g: number[]
+  m: number[]
+  p: number[]
   spend: number[]
   tokens: number[]
   executions: number[]
@@ -643,8 +650,9 @@ export function aggregate(
     models: new Map<string, number>(),
     gateways: new Map<string, number>(),
     providers: new Map<string, number>(),
-    // Keyed "user|gateway": every SCOPE, so a filtered window is compared
-    // against a baseline filtered the same way.
+    // Keyed "user|gateway|model|provider": every SCOPE, so a filtered window
+    // is compared against a baseline filtered the same way, plus the two
+    // views the breakdown table reports a change for.
     prev: new Map<string, { spend: bigint; tokens: number; ex: number }>(),
   })
 
@@ -717,9 +725,13 @@ export function aggregate(
         // Not in the current window. It may still be in the one before it,
         // which the KPI tiles compare against.
         if (t >= r.prevFrom && t < r.prevTo) {
+          // A label seen only here joins the dictionary with no facts, and
+          // `breakdown()` drops rows with no executions, so it is never listed.
           if (!r.users.has(user)) r.users.set(user, r.users.size)
           if (!r.gateways.has(gateway)) r.gateways.set(gateway, r.gateways.size)
-          const pk = `${r.users.get(user)}|${r.gateways.get(gateway)}`
+          if (!r.models.has(model)) r.models.set(model, r.models.size)
+          if (!r.providers.has(provider)) r.providers.set(provider, r.providers.size)
+          const pk = `${r.users.get(user)}|${r.gateways.get(gateway)}|${r.models.get(model)}|${r.providers.get(provider)}`
           let acc = r.prev.get(pk)
           if (!acc) { acc = { spend: 0n, tokens: 0, ex: 0 }; r.prev.set(pk, acc) }
           acc.spend += amtIn + amtCached + amtOut + write + other
@@ -770,11 +782,11 @@ export function aggregate(
       providers: [...r.providers.keys()],
       facts: c,
       previous: (() => {
-        // Sparse, like the facts: only the (user, gateway) pairs that occur.
-        const p: PreviousWindow = { from: r.prevFrom, to: r.prevTo, u: [], g: [], spend: [], tokens: [], executions: [] }
+        // Sparse, like the facts: only the combinations that occur.
+        const p: PreviousWindow = { from: r.prevFrom, to: r.prevTo, u: [], g: [], m: [], p: [], spend: [], tokens: [], executions: [] }
         for (const [pk, acc] of r.prev) {
-          const [u, g] = pk.split('|').map(Number)
-          p.u.push(u); p.g.push(g)
+          const [u, g, m, pv] = pk.split('|').map(Number)
+          p.u.push(u); p.g.push(g); p.m.push(m); p.p.push(pv)
           p.spend.push(fromScaled(acc.spend)); p.tokens.push(acc.tokens); p.executions.push(acc.ex)
         }
         return p

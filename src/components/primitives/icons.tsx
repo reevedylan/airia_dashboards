@@ -54,6 +54,22 @@ function Icon({ size = 16, className, children }: IconProps & { children: React.
   )
 }
 
+/** lucide: arrow-up */
+export const ArrowUp = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m5 12 7-7 7 7" />
+    <path d="M12 19V5" />
+  </Icon>
+)
+
+/** lucide: arrow-down */
+export const ArrowDown = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 5v14" />
+    <path d="m19 12-7 7-7-7" />
+  </Icon>
+)
+
 /** lucide: chevron-left */
 export const ChevronLeft = (p: IconProps) => (
   <Icon {...p}>

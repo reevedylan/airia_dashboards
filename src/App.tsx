@@ -6,7 +6,7 @@ import {
 import { WeeklyReport } from './WeeklyReport'
 import { ChartCard, type ChartView } from './ChartCard'
 import { series } from './theme/palette'
-import { bucketFormat, compact, currency, full, grainName, share } from './lib/format'
+import { bucketFormat, compact, currency, full, grainName, share, signedPercent } from './lib/format'
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown,
   previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
@@ -400,12 +400,12 @@ export default function App() {
      comparison: the rows are gone, so the baseline is short by however much
      expired, and the tile would report a rise that is really a deletion. */
   const comparable = block.previous.from >= retentionFloor()
+  const period = custom ? plural(rangeDays(custom), 'day') : RANGE_SPANS[range]
   const vsPrevious = (now: number, before: number) => {
     if (!comparable) return undefined
     const d = delta(now, before)
     // Direction and magnitude only. More spend is not inherently good or bad,
     // so colouring the arrow would assert a judgement the number cannot make.
-    const period = custom ? plural(rangeDays(custom), 'day') : RANGE_SPANS[range]
     return d ? { ...d, vs: `vs previous ${period}` } : undefined
   }
 
@@ -424,14 +424,15 @@ export default function App() {
     activeBuckets.filter((_, n) => n % tableStride === 0).map(fmt)
 
   const breakdownRows = rowsFor(tab)
-  const shareColumns = [
-    { key: 'shareSpend', heading: '% spend', format: (n: number) => share(n), muted: true, sortable: true },
-    { key: 'tokensIn', heading: 'Tokens in', format: compact, sortable: true },
-    { key: 'tokensOut', heading: 'Tokens out', format: compact, sortable: true },
-    { key: 'shareTokens', heading: '% tokens', format: (n: number) => share(n), muted: true, sortable: true },
-    { key: 'inputRate', heading: 'in $/M', format: (n: number) => `$${n.toFixed(2)}`, sortable: true },
-    { key: 'outputRate', heading: 'out $/M', format: (n: number) => `$${n.toFixed(2)}`, sortable: true },
-  ]
+  /* Spend against the same slice of the window before. Nothing there is a
+     new; no comparison at all — the window before has expired — is a dash,
+     never new, since every row would otherwise claim to be. */
+  const changeOf = (r: BreakdownRow): number | 'new' | null =>
+    !comparable ? null
+    : r.prevSpend > 0 ? (r.spend - r.prevSpend) / r.prevSpend
+    : r.spend > 0 ? 'new'
+    : 0
+  const rate = (n: number | null) => (n == null ? '—' : currency(n, 2))
 
   return (
     <div className="page">
@@ -596,6 +597,8 @@ export default function App() {
               { key: 'i', label: 'Input $/M', align: 'right' },
               { key: 'o', label: 'Output $/M', align: 'right' },
               { key: 'n', label: 'Executions', align: 'right' },
+              { key: 'p', label: `Spend, previous ${period}`, align: 'right' },
+              { key: 'd', label: 'Change', align: 'right' },
             ],
             rows: breakdownRows.map((r) => ({
               k: tab === 'gateway' ? gwLabel(r.key) : r.key,
@@ -607,6 +610,8 @@ export default function App() {
               i: r.inputRate == null ? '—' : currency(r.inputRate, 2),
               o: r.outputRate == null ? '—' : currency(r.outputRate, 2),
               n: full(r.executions),
+              p: comparable ? currency(r.prevSpend) : '—',
+              d: ((c) => (c === 'new' ? 'New' : c == null ? '—' : signedPercent(c)))(changeOf(r)),
             })),
           }}
           footer={
@@ -614,6 +619,9 @@ export default function App() {
               {active
                 ? `Both charts are showing this ${active.dim} only. Click the row again, or "Show all ${DIM_LABEL[active.dim]}", to return to the combined view.`
                 : `Click a ${tab} to show it on its own in both charts, with the all-${DIM_LABEL[tab]} total behind it.`}
+              {comparable
+                ? ` Change is spend against the previous ${period}; new means none in that period. Hover a row for its tokens and rates.`
+                : ` No change is shown: the ${period} before this one is older than Airia keeps. Hover a row for its tokens and rates.`}
               {tab === 'user' ? ` Requests made with the tenant's standard service key rather than an individual's are grouped as ${serviceKey}.` : ''}
               {tab === 'gateway'
                 ? ` One row per gateway configuration. Calls from before gateways were recorded are grouped as ${NO_GATEWAY}.` +
@@ -637,22 +645,22 @@ export default function App() {
               key: r.key,
               label: tab === 'gateway' ? gwLabel(r.key) : r.key,
               value: r.spend,
-              cells: {
-                shareSpend: r.shareSpend,
-                tokensIn: r.tokensIn,
-                tokensOut: r.tokensOut,
-                shareTokens: r.shareTokens,
-                inputRate: r.inputRate,
-                outputRate: r.outputRate,
-              },
+              change: changeOf(r),
+              detail: [
+                { label: 'Share of spend', value: share(r.shareSpend) },
+                { label: 'Tokens in', value: compact(r.tokensIn) },
+                { label: 'Tokens out', value: compact(r.tokensOut) },
+                { label: 'Share of tokens', value: share(r.shareTokens) },
+                { label: 'Input $/M', value: rate(r.inputRate) },
+                { label: 'Output $/M', value: rate(r.outputRate) },
+                { label: 'Executions', value: full(r.executions) },
+                ...(comparable ? [{ label: `Spend, previous ${period}`, value: currency(r.prevSpend) }] : []),
+              ],
             }))}
             labelHeading={DIM_HEADING[tab]}
             valueHeading="Spend"
-            columns={shareColumns}
-            limit={6}
-            sortable
-            searchable
-            searchPlaceholder={`Search ${DIM_LABEL[tab]}…`}
+            changeNote={comparable ? `Spend vs previous ${period}` : undefined}
+            detailFooter={`Click to show this ${tab} on its own in both charts`}
             selectedKey={active?.dim === tab ? active.key : null}
             onSelect={(key) => setIsolate(key == null ? null : { dim: tab, key })}
             formatValue={(n) => currency(n)}
