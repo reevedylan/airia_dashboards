@@ -563,6 +563,12 @@ separate bullet list; it would say everything twice.
   diverging bar from a centre line in ONE colour — direction and size,
   never red and green; the provider split as one stacked bar in the
   validated slot order (no yellow), names and shares written beside it.
+- **Bars are drawn the dashboard's way.** The top users and models are the
+  breakdown table's row — `viz-rank__track`/`__bar`/`__pct`, share of the
+  TOTAL with the percentage beside it, and `RankChange` for the change, so
+  "New" and the arrows are one implementation, not two. The movers use the
+  same track and bar split down the middle, and the provider split is flush
+  like the dashboard's stacks. The memo layout stays; only the marks match.
 - **Last week is a TICK on the daily chart, not a ghost column.**
   `BarChart`'s default ghost is a grey column behind the bar, which only
   works when the ghost is the larger — the whole behind an isolated part.

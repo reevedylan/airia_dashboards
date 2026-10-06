@@ -160,7 +160,7 @@ export function RankTable({
                 </td>
                 <td className="viz-rank__num">{formatValue(row.value)}</td>
                 <td className="viz-rank__change">
-                  <Change value={row.change} label={newLabel} />
+                  <RankChange value={row.change} label={newLabel} />
                 </td>
               </tr>
             )
@@ -210,7 +210,12 @@ export function RankTable({
   )
 }
 
-function Change({ value, label }: { value: RankRow['change']; label: string }) {
+/**
+ * A change as the breakdown shows it: an arrow and a signed percentage, a
+ * "New" badge, or a dash. Exported so the weekly report marks change the
+ * same way rather than restating it.
+ */
+export function RankChange({ value, label = 'New' }: { value: RankRow['change']; label?: string }) {
   if (value === 'new') return <span className="viz-rank__new">{label}</span>
   if (value == null || !Number.isFinite(value)) return <span className="viz-rank__flat">—</span>
   if (Math.abs(value) < FLAT) return <span className="viz-rank__flat">0%</span>

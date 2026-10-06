@@ -287,39 +287,43 @@ body {
    grid, over the columns they name. */
 .report__bars.report__bars--moves li,
 .report__movehead {
-  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 6.5rem;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 7.5rem;
 }
 .report__movehead { display: grid; gap: 14px; margin-right: 0; }
 .report__movehead > :nth-child(2) { grid-column: 3; text-align: right; }
 .report__none, .report__muted { color: var(--viz-text-muted); }
 .report__none { margin: 0; font: 400 13.5px/1.5 var(--viz-font); }
 
-/* Rows of name · bar · amount · share, on one grid so the columns align
-   down the list without a table. */
+/* Rows of name · share of total · spend · change — the dashboard's
+   breakdown row, with its track, bar and change mark (the `viz-rank__*`
+   classes), on one grid so the columns align down the list. */
 .report__bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.report__bars li {
+.report__bars li,
+.report__barhead {
   display: grid; align-items: center; gap: 14px;
-  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 6.5rem 10.5rem;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 6.5rem 6.75rem;
   font: 400 13.5px/1.3 var(--viz-font); color: var(--viz-text-primary);
 }
+.report__barhead { margin: 0 0 8px; font: 600 11.5px/1.2 var(--viz-font); color: var(--viz-text-muted); }
+.report__barhead > :nth-child(n + 3) { text-align: right; }
 .report__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.report__num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-.report__share {
-  text-align: right; font-variant-numeric: tabular-nums;
-  color: var(--viz-text-muted); white-space: nowrap; font-size: 12.5px;
-}
-.report__track { display: block; height: 10px; }
-.report__fill { display: block; height: 100%; border-radius: 0 3px 3px 0; background: var(--viz-seq-300); }
+.report__num { justify-content: flex-end; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.report__change { text-align: right; white-space: nowrap; }
+.report .viz-rank__bar { background: var(--viz-seq-400); }
 
 /* Movers: a centre line, increases grow right and decreases left, in ONE
-   neutral colour — direction and size, never a judgement. */
+   neutral colour — direction and size, never a judgement. The dashboard's
+   track and bar, split down the middle. */
 .report__diverge {
-  position: relative; display: block; height: 12px;
-  background: linear-gradient(var(--viz-axis), var(--viz-axis)) center / 1px 100% no-repeat;
+  position: relative;
+  background:
+    linear-gradient(var(--viz-axis), var(--viz-axis)) center / 1px 100% no-repeat,
+    var(--viz-surface-sunken);
 }
-.report__divbar { position: absolute; top: 1px; bottom: 1px; background: var(--viz-seq-300); }
+.report__divbar { position: absolute; top: 0; bottom: 0; height: auto; }
 .report__divbar[data-dir='up'] { left: 50%; border-radius: 0 3px 3px 0; }
 .report__divbar[data-dir='down'] { right: 50%; border-radius: 3px 0 0 3px; }
+.report__moves .viz-rank__delta { display: flex; }
 
 .report__inline {
   margin: 0 0 8px;
@@ -340,10 +344,9 @@ body {
 .report__key--tick { width: 14px; height: 2px; border-radius: 1px; background: var(--viz-text-primary); }
 
 /* Provider split: one bar, the whole week, each provider its share. */
-.report__split {
-  display: flex; gap: 2px; height: 16px; margin-bottom: 12px;
-  border-radius: 4px; overflow: hidden;
-}
+/* Segments flush, no gap — the dashboard's stacked bars dropped theirs so
+   the eye reads one whole rather than counting marks. */
+.report__split { display: flex; height: 8px; border-radius: 4px; margin-bottom: 12px; }
 .report__split > span { min-width: 3px; }
 .report__legend {
   display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 0;
@@ -364,9 +367,10 @@ body {
 @media (max-width: 720px) {
   .report__headline { font-size: 30px; }
   .report__copy { position: static; display: inline-block; margin-top: 14px; }
-  .report__bars li { grid-template-columns: minmax(0, 1fr) 5.5rem; row-gap: 4px; }
+  .report__bars li,
+  .report__barhead { grid-template-columns: minmax(0, 1fr) 5.5rem 6rem; row-gap: 4px; }
   .report__bars li > .report__name { grid-column: 1 / -1; }
-  .report__bars li > .report__share { display: none; }
+  .report__barhead > :first-child { display: none; }
   .report__bars.report__bars--moves li,
   .report__movehead { grid-template-columns: minmax(0, 1fr) 5.5rem; }
   .report__movehead > :nth-child(2) { grid-column: 2; }

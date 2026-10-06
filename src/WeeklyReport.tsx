@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { AxisExtent, BarChart, ToolbarButton } from './components'
-import { Check, Copy } from './components/primitives/icons'
+import { AxisExtent, BarChart, RankChange, ToolbarButton } from './components'
+import { ArrowDown, ArrowUp, Check, Copy } from './components/primitives/icons'
 import { other, series, type SeriesSlot } from './theme/palette'
 import {
   amount, headlineContext, moverName, sectionNotes, signedMoney, takeaways, topMoves,
-  type Entry, type Mover, type ReportFormat, type WeeklyReport as Report,
+  type Entry, type Mover, type Ranked, type ReportFormat, type WeeklyReport as Report,
 } from './data/airia'
 
 export interface WeeklyReportProps {
@@ -44,7 +44,9 @@ const INLINE = 3
  *
  * Every bar is neutral: which way spend went is shown by direction and
  * size, never by red and green, for the same reason the dashboard's deltas
- * are uncoloured.
+ * are uncoloured. And every bar is drawn the way the dashboard's breakdown
+ * draws it — the same track, colour and change mark — so the two pages read
+ * as one product.
  */
 export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, markdown }: WeeklyReportProps) {
   if (!r) {
@@ -110,7 +112,7 @@ export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, 
           <>
             {/* Names and shares are written out beside the bar, so identity
                 never rests on colour alone. */}
-            <div className="report__split" aria-hidden="true">
+            <div className="report__split viz-rank__track" aria-hidden="true">
               {r.providers.map((p, i) => p.share > 0 ? (
                 <span key={p.key} style={{ flexGrow: p.share, background: providerColor(i) }} />
               ) : null)}
@@ -146,23 +148,40 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   )
 }
 
-/** Name, bar of spend scaled to the largest row, amount and share. */
-function Bars({ rows, format: f, empty }: { rows: Entry[]; format: ReportFormat; empty: string }) {
+/**
+ * Name, share of the week's total, spend and change — the dashboard's
+ * breakdown row. The bar is a share of the TOTAL, not of the largest row:
+ * scaled to the largest, the top row always filled its track and read as
+ * all of the spend.
+ */
+function Bars({ rows, format: f, empty }: { rows: Ranked[]; format: ReportFormat; empty: string }) {
   if (rows.length === 0) return <p className="report__none">{empty}</p>
-  const max = Math.max(...rows.map((e) => e.spend), 1e-9)
   return (
-    <ol className="report__bars">
-      {rows.map((e) => (
-        <li key={e.key}>
-          <span className="report__name" title={e.key}>{e.key}</span>
-          <span className="report__track" aria-hidden="true">
-            <span className="report__fill" style={{ width: `${Math.max(2, (e.spend / max) * 100)}%` }} />
-          </span>
-          <span className="report__num">{amount(e.spend, f)}</span>
-          <span className="report__share">{f.pct(e.share)}</span>
-        </li>
-      ))}
-    </ol>
+    <div>
+      <p className="report__label report__barhead" aria-hidden="true">
+        <span />
+        <span>Share of total</span>
+        <span>Spend</span>
+        <span>Change</span>
+      </p>
+      <ol className="report__bars">
+        {rows.map((e) => (
+          <li key={e.key}>
+            <span className="report__name" title={e.key}>{e.key}</span>
+            <span className="viz-rank__share">
+              <span className="viz-rank__track" aria-hidden="true">
+                <span className="viz-rank__bar" data-some={e.spend > 0 ? '' : undefined} style={{ width: `${e.share * 100}%` }} />
+              </span>
+              <span className="viz-rank__pct">{f.pct(e.share)}</span>
+            </span>
+            <span className="report__num">{amount(e.spend, f)}</span>
+            <span className="report__change">
+              <RankChange value={e.before > 0 ? (e.spend - e.before) / e.before : 'new'} />
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
   )
 }
 
@@ -181,14 +200,17 @@ function Moves({ label, rows, format: f }: { label: string; rows: Mover[]; forma
         {rows.map((m) => (
           <li key={m.key}>
             <span className="report__name" title={moverName(m)}>{moverName(m)}</span>
-            <span className="report__diverge" aria-hidden="true">
+            <span className="report__diverge viz-rank__track" aria-hidden="true">
               <span
-                className="report__divbar"
+                className="report__divbar viz-rank__bar"
                 data-dir={m.change > 0 ? 'up' : 'down'}
-                style={{ width: `${Math.max(2, (Math.abs(m.change) / max) * 50)}%` }}
+                style={{ width: `${Math.max(1, (Math.abs(m.change) / max) * 50)}%` }}
               />
             </span>
-            <span className="report__num">{signedMoney(m.change, f.money)}</span>
+            <span className="report__num viz-rank__delta">
+              {m.change > 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
+              {signedMoney(m.change, f.money)}
+            </span>
           </li>
         ))}
       </ol>

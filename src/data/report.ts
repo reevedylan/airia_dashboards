@@ -26,6 +26,11 @@ export interface Entry {
   share: number
 }
 
+/** A top-three row: this week's spend, and last week's for its change. */
+export interface Ranked extends Entry {
+  before: number
+}
+
 export interface Mover {
   key: string
   now: number
@@ -48,8 +53,9 @@ export interface WeeklyReport {
   previous: DayRange
   now: Totals
   before: Totals
-  topUsers: Entry[]
-  topModels: Entry[]
+  /** With last week's spend, for each row's change. */
+  topUsers: Ranked[]
+  topModels: Ranked[]
   movers: {
     users: { up: Mover[]; down: Mover[] }
     models: { up: Mover[]; down: Mover[] }
@@ -103,6 +109,10 @@ export function buildReport(
 
   const entry = (total: number) => (r: { key: string; spend: number }): Entry =>
     ({ key: r.key, spend: r.spend, share: total > 0 ? r.spend / total : 0 })
+  const ranked = ({ now: a, before: b }: ReturnType<typeof both>): Ranked[] => {
+    const was = new Map(b.map((r) => [r.key, r.spend]))
+    return a.slice(0, TOP).map((r) => ({ ...entry(now.spend)(r), before: was.get(r.key) ?? 0 }))
+  }
 
   const movers = ({ now: a, before: b }: ReturnType<typeof both>) => {
     const was = new Map(b.map((r) => [r.key, r.spend]))
@@ -147,8 +157,8 @@ export function buildReport(
     previous,
     now,
     before,
-    topUsers: users.now.slice(0, TOP).map(entry(now.spend)),
-    topModels: models.now.slice(0, TOP).map(entry(now.spend)),
+    topUsers: ranked(users),
+    topModels: ranked(models),
     movers: { users: movers(users), models: movers(models) },
     added: {
       models: only(models.now, models.before, now.spend),
