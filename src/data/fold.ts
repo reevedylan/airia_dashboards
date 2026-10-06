@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { RangeBlock } from '../lib/airia/aggregate'
 import { fetchGatewayNames, type GatewayNames } from '../lib/airia/gateways'
+import { fetchTenantName } from '../lib/airia/tenant'
 import type { AiriaData } from './live'
 
 export interface Series {
@@ -337,4 +338,21 @@ export function useGatewayNames(key: string | null): GatewayNames {
     return () => ctrl.abort()
   }, [key])
   return names
+}
+
+/**
+ * The key's tenant name, fetched once per key in the background — null
+ * until it lands, and for good if the lookup fails. Outside the load state
+ * for the same reason as the gateway names: nothing waits on it.
+ */
+export function useTenantName(key: string | null): string | null {
+  const [name, setName] = useState<string | null>(null)
+  useEffect(() => {
+    setName(null)
+    if (!key) return
+    const ctrl = new AbortController()
+    fetchTenantName(key, ctrl.signal).then((n) => { if (!ctrl.signal.aborted) setName(n) })
+    return () => ctrl.abort()
+  }, [key])
+  return name
 }

@@ -443,12 +443,14 @@ function table(head: string[], align: ('l' | 'r')[], rows: string[][]): string {
 export function reportMarkdown(
   r: WeeklyReport,
   f: ReportFormat,
-  { zone, scopeLabel }: { zone: string; scopeLabel: string | null },
+  { zone, scopeLabel, tenant = null }: { zone: string; scopeLabel: string | null; tenant?: string | null },
 ): string {
   const t = takeaways(r, f)
   const n = sectionNotes(r)
   const out: string[] = []
-  out.push(`## Gateway spend: week of ${f.span(r.week)}`)
+  // The tenant in the title: a pasted report leaves the page, and with it
+  // every other clue to whose spend this is.
+  out.push(`## ${tenant ? `${tenant} gateway spend` : 'Gateway spend'}: week of ${f.span(r.week)}`)
   out.push(`**${t.headline}**  \n${t.changes}  \n${headlineContext(r, f)}`)
   out.push(`*Monday to Sunday, ${zone}.*` + (scopeLabel ? ` *Filtered to ${scopeLabel}.*` : ''))
 

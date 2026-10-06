@@ -10,7 +10,7 @@ import { bucketFormat, compact, currency, full, grainName, share, signedPercent 
 import {
   useAiriaLive, useAllUsers, seriesFor, breakdown,
   previousTotals, delta, dayOf, stepWindow, oldestEndDay, retentionFloor,
-  stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames,
+  stepRange, rangeDays, RETENTION_DAYS, useAllGateways, useGatewayNames, useTenantName,
   windowSpanMs, nativeGrain, windowDays, ZONE,
   reportWeek, weekBefore, oldestReportBack, buildReport, reportMarkdown, type ReportFormat,
   type Dimension, type BreakdownRow, type History, type DayRange, type Scope, type GrainPick,
@@ -106,6 +106,12 @@ export default function App() {
   const busy = load.status === 'loading'
   const allUsers = useAllUsers(data)
   const gwNames = useGatewayNames(key)
+  /* Whose data this is. Every tenant's page is otherwise identical, so the
+     header, the tab and the report all name it. */
+  const tenant = useTenantName(key)
+  useEffect(() => {
+    document.title = tenant ? `${tenant} · Gateway usage` : 'Gateway usage'
+  }, [tenant])
   const gwLabel = useCallback((id: string) => gatewayLabel(id, gwNames), [gwNames])
   /* Sorted by what they READ as, not by their ids — an id-ordered list of
      names looks shuffled. Re-sorts when the names land. */
@@ -159,8 +165,8 @@ export default function App() {
   if (freshReport) heldReport.current = freshReport
   const report = freshReport ?? heldReport.current
   const markdown = useMemo(
-    () => (report ? reportMarkdown(report, reportFormat, { zone: ZONE, scopeLabel }) : null),
-    [report, reportFormat, scopeLabel],
+    () => (report ? reportMarkdown(report, reportFormat, { zone: ZONE, scopeLabel, tenant }) : null),
+    [report, reportFormat, scopeLabel, tenant],
   )
   const oldestBack = useMemo(() => oldestReportBack(), [])
   const rowsByDim = useMemo(() => ({
@@ -436,7 +442,7 @@ export default function App() {
 
   return (
     <div className="page">
-      <Head view={view} onView={setView} />
+      <Head view={view} onView={setView} tenant={tenant} />
       {toolbar}
 
       {/* A refetch holds the page rather than replacing it, so the only
@@ -481,6 +487,7 @@ export default function App() {
           format={reportFormat}
           scopeLabel={scopeLabel}
           zone={ZONE}
+          tenant={tenant}
           markdown={freshReport ? markdown : null}
         />
       ) : (<>
@@ -807,7 +814,7 @@ function useView(): [View, (v: View) => void] {
  * toolbar narrows the data, the nav changes the page, and putting the two
  * in one row would blur which is which.
  */
-function Head({ view, onView }: { view?: View; onView?: (v: View) => void }) {
+function Head({ view, onView, tenant }: { view?: View; onView?: (v: View) => void; tenant?: string | null }) {
   const tab = (v: View, label: string) => (
     <a
       href={v === 'report' ? '#report' : '#dashboard'}
@@ -820,7 +827,13 @@ function Head({ view, onView }: { view?: View; onView?: (v: View) => void }) {
   )
   return (
     <header className="page__head">
-      <h1>Gateway usage</h1>
+      <h1>
+        {/* The tenant leads, in full ink: it is the answer to "whose numbers
+            are these?", which every tenant's identical page otherwise left
+            open. Absent until the lookup lands, and if it fails. */}
+        {tenant ? <><span className="page__tenant">{tenant}</span><span className="viz-sr-only"> · </span></> : null}
+        Gateway usage
+      </h1>
       {view && onView ? (
         <nav className="page__nav" aria-label="Pages">
           {tab('dashboard', 'Dashboard')}

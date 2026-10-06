@@ -46,6 +46,13 @@ body {
   color: var(--viz-text-secondary);
   letter-spacing: -0.01em;
 }
+/* The tenant in full ink ahead of the quieter page name, parted by a
+   hairline: "Airia | Gateway usage". */
+.page__tenant {
+  color: var(--viz-text-primary); font-weight: 700;
+  padding-right: 12px; margin-right: 12px;
+  border-right: 1px solid var(--viz-border);
+}
 
 .grid {
   display: grid;
@@ -256,6 +263,7 @@ body {
   font: 600 12px/1.2 var(--viz-font); color: var(--viz-text-muted);
   letter-spacing: 0.06em; text-transform: uppercase;
 }
+.report__tenant { color: var(--viz-text-secondary); }
 .report__headline {
   margin: 0; max-width: 20ch;
   font: 700 40px/1.1 var(--viz-font); letter-spacing: -0.025em;

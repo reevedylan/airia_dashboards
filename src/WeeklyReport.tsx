@@ -16,6 +16,8 @@ export interface WeeklyReportProps {
   /** Who the figures are narrowed to, or null for all traffic. */
   scopeLabel: string | null
   zone: string
+  /** Whose report this is, or null until the name is known. */
+  tenant: string | null
   /** The same report as Markdown, for the copy button. */
   markdown: string | null
 }
@@ -45,7 +47,7 @@ const providerColor = (i: number) => (i < PROVIDER_SLOTS.length ? series(PROVIDE
  * draws it — the same track, colour and change mark — so the two pages read
  * as one product.
  */
-export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, markdown }: WeeklyReportProps) {
+export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, tenant, markdown }: WeeklyReportProps) {
   if (!r) {
     return <p className="empty" role="status">Preparing the weekly report…</p>
   }
@@ -58,9 +60,13 @@ export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, 
   const dayLabel = (d: number) => f.day(d).split(' ').slice(0, 2).join(' ')
 
   return (
-    <article className="report" data-loading={loading ? '' : undefined} aria-label={`Weekly report, week of ${f.span(r.week)}`}>
+    <article className="report" data-loading={loading ? '' : undefined} aria-label={`${tenant ? `${tenant} weekly report` : 'Weekly report'}, week of ${f.span(r.week)}`}>
       <header className="report__head">
-        <p className="report__kicker">Week of {f.span(r.week)}</p>
+        {/* Named here as well as in the page header: a report gets
+            screenshotted and passed on, and the header may not come with it. */}
+        <p className="report__kicker">
+          {tenant ? <><span className="report__tenant">{tenant}</span> · </> : null}Week of {f.span(r.week)}
+        </p>
         <h2 className="report__headline">{t.headline}</h2>
         {/* What happened, then why: the mover this names is always in a
             list below. */}
