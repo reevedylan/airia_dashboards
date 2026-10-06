@@ -22,8 +22,6 @@ export interface RankRow {
   change?: number | 'new' | null
   /** Everything else about the row, shown on hover rather than in columns. */
   detail?: readonly RankDetail[]
-  /** Optional leading glyph — a flag, an avatar, an icon. */
-  glyph?: string
 }
 
 export interface RankTableProps {
@@ -112,10 +110,7 @@ export function RankTable({
           {shown.map((row, i) => {
             const selected = selectedKey === row.key
             const label = (
-              <span className="viz-rank__text">
-                {row.glyph ? <span className="viz-rank__glyph" aria-hidden="true">{row.glyph}</span> : null}
-                {row.label}
-              </span>
+              <span className="viz-rank__text">{row.label}</span>
             )
             return (
               <tr

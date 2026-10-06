@@ -51,13 +51,12 @@ export interface BarChartProps {
    * `bar` (the default) is a grey column BEHIND the stack, which only works
    * when the ghost is the larger of the two — the whole behind an isolated
    * part. When it can be smaller, as with last week against this week, a
-   * column behind is simply hidden. `tick` draws it as a short line across
-   * the bar at its height, ON TOP, so it reads whichever is larger.
-   * `pair` draws it as its own grey column BESIDE each bar — the clearest
-   * for a handful of columns (a week of days), where a tick floating above
-   * a short bar, or alone over an empty day, read as a stray mark.
+   * column behind is simply hidden. `pair` draws it as its own grey column
+   * BESIDE each bar instead, so it reads whichever is larger. (A `tick`
+   * across the bar was tried first; over a short bar, or alone over an
+   * empty day, it read as a stray mark.)
    */
-  ghostMark?: 'bar' | 'tick' | 'pair'
+  ghostMark?: 'bar' | 'pair'
   /**
    * Label every column under the axis — for a handful of columns, where the
    * reader wants "which day is this" without hovering. Labels that would
@@ -363,22 +362,6 @@ export function BarChart({
               </g>
             ) : null}
 
-            {ghost && ghostMark === 'tick' ? (
-              <g aria-hidden="true">
-                {model.columns.map((col, i) =>
-                  col.ghost <= 0.5 ? null : (
-                    <line
-                      key={`t${i}`}
-                      x1={model.left + col.x - 3}
-                      x2={model.left + col.x + model.band.width + 3}
-                      y1={Math.round(model.baseline - col.ghost) + 0.5}
-                      y2={Math.round(model.baseline - col.ghost) + 0.5}
-                      className="viz-ghost-tick"
-                    />
-                  ),
-                )}
-              </g>
-            ) : null}
           </svg>
 
           {hover != null ? (

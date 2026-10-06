@@ -269,11 +269,6 @@ body {
   font: 700 40px/1.1 var(--viz-font); letter-spacing: -0.025em;
   color: var(--viz-text-primary);
 }
-.report__context {
-  margin: 12px 0 0;
-  font: 400 14px/1.5 var(--viz-font); color: var(--viz-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
 .report__copy { position: absolute; top: 24px; right: 0; }
 
 .report__section { padding: 26px 0 24px; border-bottom: 1px solid var(--viz-grid); }

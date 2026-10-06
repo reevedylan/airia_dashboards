@@ -171,7 +171,6 @@
 /* ------------------------------------------------------------------ plot -- */
 
 .viz-plot { position: relative; width: 100%; min-width: 0; }
-.viz-plot--centred { display: grid; place-items: center; }
 .viz-plot svg { display: block; overflow: visible; border-radius: 2px; }
 
 .viz-grid-line { stroke: var(--viz-grid); stroke-width: 1; shape-rendering: crispEdges; }
@@ -223,7 +222,6 @@
   padding: 7px 0;
   word-break: break-word;
 }
-.viz-rank__glyph { font-size: 14px; line-height: 1; }
 
 /* Share of the TOTAL: a full track is 100% of spend, so the top row only
    fills it when it really is everything. */
@@ -395,13 +393,9 @@
 /* The unfiltered whole, behind an isolated series. Faint enough to read as
    context rather than data, and never coloured — it is not a series. */
 .viz-ghost-bar { fill: var(--viz-other); opacity: 0.22; }
-/* The ghost as a tick across the bar, drawn on top. Ink rather than the
-   de-emphasis grey, so it holds its contrast against a filled bar in both
-   themes. */
 /* Last week as a column of its own beside this week's: grey, because it is
    the reference rather than a series, but solid enough to read as data. */
 .viz-ghost-pair { fill: var(--viz-other); opacity: 0.55; }
-.viz-ghost-tick { stroke: var(--viz-text-primary); stroke-width: 2; stroke-linecap: round; }
 
 /* --- selectable rank rows ------------------------------------------------ */
 
