@@ -26,9 +26,15 @@ export interface Entry {
   share: number
 }
 
-/** A top-three row: this week's spend, and last week's for its change. */
+/** A listed row: this week's spend, and last week's for its change. */
 export interface Ranked extends Entry {
   before: number
+  /** `spend - before`. */
+  change: number
+  /** Absent last week. */
+  isNew: boolean
+  /** Absent this week — listed because it moved, at $0. */
+  isGone: boolean
 }
 
 export interface Mover {
@@ -53,9 +59,16 @@ export interface WeeklyReport {
   previous: DayRange
   now: Totals
   before: Totals
-  /** With last week's spend, for each row's change. */
+  /** The top three by spend — what the share headings describe. */
   topUsers: Ranked[]
   topModels: Ranked[]
+  /**
+   * What the page lists: the top three by spend, plus any of the biggest
+   * movers not already among them. One list per dimension carries share,
+   * spend AND change, so the same name is never shown twice with two kinds
+   * of change; and the mover the "what changed" line names is always in it.
+   */
+  lists: { users: Ranked[]; models: Ranked[] }
   movers: {
     users: { up: Mover[]; down: Mover[] }
     models: { up: Mover[]; down: Mover[] }
@@ -109,10 +122,15 @@ export function buildReport(
 
   const entry = (total: number) => (r: { key: string; spend: number }): Entry =>
     ({ key: r.key, spend: r.spend, share: total > 0 ? r.spend / total : 0 })
-  const ranked = ({ now: a, before: b }: ReturnType<typeof both>): Ranked[] => {
+  const rankedOf = ({ now: a, before: b }: ReturnType<typeof both>) => {
     const was = new Map(b.map((r) => [r.key, r.spend]))
-    return a.slice(0, TOP).map((r) => ({ ...entry(now.spend)(r), before: was.get(r.key) ?? 0 }))
+    const is = new Set(a.map((r) => r.key))
+    return (r: { key: string; spend: number }): Ranked => {
+      const before = was.get(r.key) ?? 0
+      return { ...entry(now.spend)(r), before, change: r.spend - before, isNew: !was.has(r.key), isGone: !is.has(r.key) }
+    }
   }
+  const ranked = (x: ReturnType<typeof both>): Ranked[] => x.now.slice(0, TOP).map(rankedOf(x))
 
   const movers = ({ now: a, before: b }: ReturnType<typeof both>) => {
     const was = new Map(b.map((r) => [r.key, r.spend]))
@@ -136,6 +154,23 @@ export function buildReport(
 
   const top3 = users.now.slice(0, TOP).reduce((a, r) => a + r.spend, 0)
   const net = now.spend - before.spend
+
+  /* The top three by spend, then the biggest movers either way, then the
+     biggest in the direction of the week's net change — the one the "what
+     changed" line can name. Ordered by spend, so the share rows lead and a
+     departure, at $0, comes last. */
+  const listed = (x: ReturnType<typeof both>, m: { up: Mover[]; down: Mover[] }): Ranked[] => {
+    const toRow = rankedOf(x)
+    const rows = new Map<string, Ranked>()
+    for (const r of x.now.slice(0, TOP)) rows.set(r.key, toRow(r))
+    const lead = (net >= 0 ? m.up : m.down)[0]
+    for (const mv of [...topMoves(m), ...(lead ? [lead] : [])]) {
+      if (!rows.has(mv.key)) rows.set(mv.key, toRow({ key: mv.key, spend: mv.now }))
+    }
+    return [...rows.values()].sort((p, q) => q.spend - p.spend || q.before - p.before)
+  }
+  const userMoves = movers(users)
+  const modelMoves = movers(models)
   const movedWith = (x: ReturnType<typeof both>) => {
     const was = new Map(x.before.map((r) => [r.key, r.spend]))
     const is = new Map(x.now.map((r) => [r.key, r.spend]))
@@ -159,7 +194,8 @@ export function buildReport(
     before,
     topUsers: ranked(users),
     topModels: ranked(models),
-    movers: { users: movers(users), models: movers(models) },
+    lists: { users: listed(users, userMoves), models: listed(models, modelMoves) },
+    movers: { users: userMoves, models: modelMoves },
     added: {
       models: only(models.now, models.before, now.spend),
       users: only(users.now, users.before, now.spend),
@@ -348,15 +384,13 @@ export function takeaways(r: WeeklyReport, f: ReportFormat): Takeaways {
 export interface SectionNotes {
   users: string
   models: string
-  changes: string
   newAndDropped: string
 }
 
-export function sectionNotes(r: WeeklyReport, f: ReportFormat): SectionNotes {
+export function sectionNotes(r: WeeklyReport): SectionNotes {
   return {
     users: 'Anyone with at least one gateway call.' + (r.serviceKeyUsed ? ' The service key counts as one.' : ''),
     models: '',
-    changes: `Total: ${f.money(r.before.spend)} → ${f.money(r.now.spend)}.`,
     newAndDropped: 'New: not used last week. No longer used: used last week, not this week.',
   }
 }
@@ -365,9 +399,22 @@ export function sectionNotes(r: WeeklyReport, f: ReportFormat): SectionNotes {
 export const amount = (n: number, f: ReportFormat): string =>
   n > 0 && n < 0.005 ? `<${f.money(0.01)}` : f.money(n)
 
-/** The subline under the headline: last week, and the other two measures. */
+/** A change as the page writes it: "+12%", "−60%", "new", or "no change".
+ *  Always a percentage, like the dashboard's breakdown. */
+export function pctChange(now: number, before: number): string {
+  if (before <= 0) return now > 0 ? 'new' : 'no change'
+  const c = (now - before) / before
+  if (Math.abs(c) < 0.0005) return 'no change'
+  const p = Math.abs(c * 100)
+  return `${c > 0 ? '+' : '−'}${p < 10 ? p.toFixed(1) : Math.round(p).toLocaleString('en-US')}%`
+}
+
+/** The three measures, each against last week — the Markdown's subline;
+ *  the page draws the same as a strip of figures. */
 export const headlineContext = (r: WeeklyReport, f: ReportFormat): string =>
-  `vs ${f.money(r.before.spend)} last week · ${f.tokens(r.now.tokens)} tokens · ${f.count(r.now.executions)} executions`
+  `Spend ${f.money(r.now.spend)} (${pctChange(r.now.spend, r.before.spend)}, was ${f.money(r.before.spend)}) · ` +
+  `${f.tokens(r.now.tokens)} tokens (${pctChange(r.now.tokens, r.before.tokens)}) · ` +
+  `${f.count(r.now.executions)} executions (${pctChange(r.now.executions, r.before.executions)})`
 
 /**
  * The biggest changes in one dimension, largest first whichever way —
@@ -399,36 +446,27 @@ export function reportMarkdown(
   { zone, scopeLabel }: { zone: string; scopeLabel: string | null },
 ): string {
   const t = takeaways(r, f)
-  const n = sectionNotes(r, f)
+  const n = sectionNotes(r)
   const out: string[] = []
   out.push(`## Gateway spend: week of ${f.span(r.week)}`)
-  out.push(`**${t.headline}**  \n${headlineContext(r, f)}`)
+  out.push(`**${t.headline}**  \n${t.changes}  \n${headlineContext(r, f)}`)
   out.push(`*Monday to Sunday, ${zone}.*` + (scopeLabel ? ` *Filtered to ${scopeLabel}.*` : ''))
 
   out.push(`### ${t.daily}`)
   out.push(table(['Day', 'This week', 'Last week'], ['l', 'r', 'r'],
     r.daily.x.map((x, i) => [f.day(x), f.money(r.daily.now[i]), f.money(r.daily.before[i] ?? 0)])))
 
-  const entries = (label: string, rows: Entry[]) =>
+  const entries = (label: string, rows: Ranked[]) =>
     rows.length === 0 ? '_No spend this week._'
-      : table([label, 'Spend', 'Share'], ['l', 'r', 'r'], rows.map((e) => [e.key, amount(e.spend, f), f.pct(e.share)]))
+      : table([label, 'Spend', 'Share', 'Last week', '$ change', '% change'], ['l', 'r', 'r', 'r', 'r', 'r'],
+          rows.map((e) => [moverName(e), amount(e.spend, f), f.pct(e.share), amount(e.before, f),
+            signedMoney(e.change, f.money), pctChange(e.spend, e.before)]))
   out.push(`### ${t.users}`)
   out.push(`*${n.users}*`)
-  out.push(entries('User', r.topUsers))
+  out.push(entries('User', r.lists.users))
   out.push(`### ${t.models}`)
   if (n.models) out.push(`*${n.models}*`)
-  out.push(entries('Model', r.topModels))
-
-  out.push(`### ${t.changes}`)
-  out.push(`*${n.changes}*`)
-  const moves = (label: string, m: { up: Mover[]; down: Mover[] }) => {
-    const rows = [...m.up, ...m.down]
-    return rows.length === 0 ? `_${label}: no change of a cent or more._`
-      : table([label, 'This week', 'Last week', 'Change'], ['l', 'r', 'r', 'r'],
-          rows.map((x) => [moverName(x), f.money(x.now), f.money(x.before), signedMoney(x.change, f.money)]))
-  }
-  out.push(moves('Model', r.movers.models))
-  out.push(moves('User', r.movers.users))
+  out.push(entries('Model', r.lists.models))
 
   out.push(`### ${t.newAndDropped}`)
   out.push(`*${n.newAndDropped}*`)
@@ -456,4 +494,4 @@ export function reportMarkdown(
 }
 
 /** A mover's name, marked when the whole change is an arrival or departure. */
-export const moverName = (m: Mover): string => m.isNew ? `${m.key} (new)` : m.isGone ? `${m.key} (no longer used)` : m.key
+export const moverName = (m: Mover | Ranked): string => m.isNew ? `${m.key} (new)` : m.isGone ? `${m.key} (no longer used)` : m.key

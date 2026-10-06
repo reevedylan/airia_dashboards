@@ -282,58 +282,72 @@ body {
   margin: -8px 0 16px;
   font: 400 13px/1.5 var(--viz-font); color: var(--viz-text-muted);
 }
-.report__moves + .report__moves { margin-top: 18px; }
-/* Movers are name · bar · change, and their column labels sit on the same
-   grid, over the columns they name. */
-.report__bars.report__bars--moves li,
-.report__movehead {
-  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 7.5rem;
-}
-.report__movehead { display: grid; gap: 14px; margin-right: 0; }
-.report__movehead > :nth-child(2) { grid-column: 3; text-align: right; }
 .report__none, .report__muted { color: var(--viz-text-muted); }
 .report__none { margin: 0; font: 400 13.5px/1.5 var(--viz-font); }
+.report__right { text-align: right; white-space: nowrap; }
+.report__tab { font-variant-numeric: tabular-nums; }
 
-/* Rows of name · share of total · spend · change — the dashboard's
-   breakdown row, with its track, bar and change mark (the `viz-rank__*`
-   classes), on one grid so the columns align down the list. */
-.report__bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.report__bars li,
-.report__barhead {
+/* What happened (the headline), then why. */
+.report__why {
+  margin: 10px 0 0;
+  font: 500 16px/1.4 var(--viz-font); color: var(--viz-text-secondary);
+}
+
+/* The three measures, each with its change and last week's figure. */
+.report__figures {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;
+  margin: 22px 0 0;
+}
+.report__figure dt {
+  font: 500 12px/1.2 var(--viz-font); color: var(--viz-text-muted); margin-bottom: 6px;
+}
+.report__figure dd { margin: 0; }
+.report__figure dd:first-of-type { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.report__figval {
+  font: 650 22px/1.1 var(--viz-font); color: var(--viz-text-primary);
+  font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+}
+.report__figwas {
+  margin-top: 4px !important;
+  font: 400 12px/1.2 var(--viz-font); color: var(--viz-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every list on the page is one grid — a heading row over its rows — so the
+   columns line up down the list without a table. The bars, percentages and
+   change marks are the dashboard breakdown's own (`viz-rank__*`). */
+.report__rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.report__rows li,
+.report__head-row {
   display: grid; align-items: center; gap: 14px;
-  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 6.5rem 6.75rem;
   font: 400 13.5px/1.3 var(--viz-font); color: var(--viz-text-primary);
 }
-.report__barhead { margin: 0 0 8px; font: 600 11.5px/1.2 var(--viz-font); color: var(--viz-text-muted); }
-.report__barhead > :nth-child(n + 3) { text-align: right; }
+.report__head-row { margin: 0 0 10px; font: 600 11px/1.2 var(--viz-font); color: var(--viz-text-muted); }
+.report__head-row > :not(:first-child) { text-align: right; }
+.report__head-row > :nth-child(2) { text-align: left; }
+.report__grid--bars :is(.report__head-row, li) {
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) 5.5rem 5.75rem 5.75rem;
+}
+.report__grid--providers :is(.report__head-row, li) {
+  grid-template-columns: minmax(0, 1fr) 4rem 5.5rem 5.75rem;
+}
+.report__grid--providers .report__head-row > :nth-child(2) { text-align: right; }
+.report__rows--arrivals { gap: 8px; }
+.report__rows--arrivals li { grid-template-columns: minmax(0, 1fr) auto; }
 .report__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.report__num { justify-content: flex-end; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-.report__change { text-align: right; white-space: nowrap; }
+.report__num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 .report .viz-rank__bar { background: var(--viz-seq-400); }
 
-/* Movers: a centre line, increases grow right and decreases left, in ONE
-   neutral colour — direction and size, never a judgement. The dashboard's
-   track and bar, split down the middle. */
-.report__diverge {
-  position: relative;
-  background:
-    linear-gradient(var(--viz-axis), var(--viz-axis)) center / 1px 100% no-repeat,
-    var(--viz-surface-sunken);
+/* New on the left, no longer used on the right; each side grouped by kind
+   under its own count, which is what the heading's counts point at. */
+.report__arrivals { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+.report__sidehead {
+  display: flex; justify-content: space-between; margin: 0 0 12px !important;
+  padding-bottom: 8px; border-bottom: 1px solid var(--viz-border);
 }
-.report__divbar { position: absolute; top: 0; bottom: 0; height: auto; }
-.report__divbar[data-dir='up'] { left: 50%; border-radius: 0 3px 3px 0; }
-.report__divbar[data-dir='down'] { right: 50%; border-radius: 3px 0 0 3px; }
-.report__moves .viz-rank__delta { display: flex; }
+.report__kind + .report__kind { margin-top: 16px; }
+.report__kindhead { margin: 0 0 8px; font: 600 13px/1.2 var(--viz-font); color: var(--viz-text-primary); }
 
-.report__inline {
-  margin: 0 0 8px;
-  font: 400 14px/1.6 var(--viz-font); color: var(--viz-text-primary);
-  overflow-wrap: anywhere;
-}
-.report__inline:last-child { margin-bottom: 0; }
-
-/* The chart's start and end days, clear of its $0 tick. */
-.report .viz-extent { margin-top: 8px; }
 .report__note {
   display: flex; align-items: center; gap: 6px; margin: 8px 0 0;
   font: 400 12px/1.2 var(--viz-font); color: var(--viz-text-muted);
@@ -341,21 +355,15 @@ body {
 .report__key { display: inline-block; margin-left: 10px; }
 .report__key:first-child { margin-left: 0; }
 .report__key--bar { width: 10px; height: 10px; border-radius: 2px; background: var(--viz-series-1); }
-.report__key--tick { width: 14px; height: 2px; border-radius: 1px; background: var(--viz-text-primary); }
+.report__key--ghost { width: 10px; height: 10px; border-radius: 2px; background: var(--viz-other); opacity: 0.55; }
 
 /* Provider split: one bar, the whole week, each provider its share. */
 /* Segments flush, no gap — the dashboard's stacked bars dropped theirs so
    the eye reads one whole rather than counting marks. */
 .report__split { display: flex; height: 8px; border-radius: 4px; margin-bottom: 12px; }
 .report__split > span { min-width: 3px; }
-.report__legend {
-  display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 0;
-  font: 400 13.5px/1.4 var(--viz-font); color: var(--viz-text-secondary);
-}
-.report__legend strong { color: var(--viz-text-primary); font-weight: 600; }
-.report__legend em { font-style: normal; color: var(--viz-text-muted); }
 .report__swatch {
-  display: inline-block; width: 10px; height: 10px; margin-right: 7px;
+  display: inline-block; width: 10px; height: 10px; margin-right: 8px;
   border-radius: 2px; vertical-align: -1px;
 }
 
@@ -367,11 +375,11 @@ body {
 @media (max-width: 720px) {
   .report__headline { font-size: 30px; }
   .report__copy { position: static; display: inline-block; margin-top: 14px; }
-  .report__bars li,
-  .report__barhead { grid-template-columns: minmax(0, 1fr) 5.5rem 6rem; row-gap: 4px; }
-  .report__bars li > .report__name { grid-column: 1 / -1; }
-  .report__barhead > :first-child { display: none; }
-  .report__bars.report__bars--moves li,
-  .report__movehead { grid-template-columns: minmax(0, 1fr) 5.5rem; }
-  .report__movehead > :nth-child(2) { grid-column: 2; }
+  .report__figval { font-size: 18px; }
+  /* The name takes a line of its own; share, spend and % change beneath.
+     The dollar change is in the Markdown. */
+  .report__grid--bars :is(.report__head-row, li) { grid-template-columns: minmax(0, 1fr) 5rem 5rem; row-gap: 4px; }
+  .report__grid--bars li > .report__name { grid-column: 1 / -1; }
+  .report__grid--bars :is(.report__head-row > :first-child, .report__head-row > :nth-child(4), li > :nth-child(4)) { display: none; }
+  .report__arrivals { grid-template-columns: 1fr; gap: 24px; }
 }

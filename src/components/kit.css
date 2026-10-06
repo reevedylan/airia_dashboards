@@ -398,6 +398,9 @@
 /* The ghost as a tick across the bar, drawn on top. Ink rather than the
    de-emphasis grey, so it holds its contrast against a filled bar in both
    themes. */
+/* Last week as a column of its own beside this week's: grey, because it is
+   the reference rather than a series, but solid enough to read as data. */
+.viz-ghost-pair { fill: var(--viz-other); opacity: 0.55; }
 .viz-ghost-tick { stroke: var(--viz-text-primary); stroke-width: 2; stroke-linecap: round; }
 
 /* --- selectable rank rows ------------------------------------------------ */

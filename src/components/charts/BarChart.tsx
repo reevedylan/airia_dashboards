@@ -53,11 +53,26 @@ export interface BarChartProps {
    * part. When it can be smaller, as with last week against this week, a
    * column behind is simply hidden. `tick` draws it as a short line across
    * the bar at its height, ON TOP, so it reads whichever is larger.
+   * `pair` draws it as its own grey column BESIDE each bar — the clearest
+   * for a handful of columns (a week of days), where a tick floating above
+   * a short bar, or alone over an empty day, read as a stray mark.
    */
-  ghostMark?: 'bar' | 'tick'
+  ghostMark?: 'bar' | 'tick' | 'pair'
+  /**
+   * Label every column under the axis — for a handful of columns, where the
+   * reader wants "which day is this" without hovering. Labels that would
+   * collide are thinned to every other one, and so on.
+   */
+  xLabel?: (t: number) => string
 }
 
 const PAD = { top: 10, right: 6, bottom: 2, left: 6 }
+/** Room under the axis for `xLabel`. */
+const X_LABEL_H = 20
+/** A column label is given this much width before labels are thinned. */
+const X_LABEL_W = 52
+/** The gap between a pair's two columns. */
+const PAIR_GAP = 2
 /** A bar narrower than this is a sliver that aliases into a smear. */
 const MIN_BAR_PX = 2
 /** A stack segment shorter than this is dropped rather than drawn. */
@@ -66,7 +81,10 @@ const MIN_SEG_PX = 1
 export function BarChart({
   x, series, height = 170, activeSeries = null,
   formatValue = compact, reducer = 'sum', yTickCount = 3, yAxis = true, formatTick, formatX, ghost, ghostMark = 'bar',
+  xLabel,
 }: BarChartProps) {
+  const pair = ghost != null && ghostMark === 'pair'
+  const bottom = PAD.bottom + (xLabel ? X_LABEL_H : 0)
   const [ref, size] = useSize<HTMLDivElement>()
   const uid = useId()
   const [hover, setHover] = useState<number | null>(null)
@@ -79,7 +97,7 @@ export function BarChart({
     // replaced below once the tick labels are known.
     const provisionalLeft = PAD.left + (yAxis ? 40 : 0)
     const plotW0 = Math.max(1, w - provisionalLeft - PAD.right)
-    const plotH = Math.max(1, height - PAD.top - PAD.bottom)
+    const plotH = Math.max(1, height - PAD.top - bottom)
 
     // Bucket down to the number of bars the card can actually paint. The
     // chart stays dense — hundreds of thin columns — but never sub-pixel.
@@ -125,10 +143,15 @@ export function BarChart({
     const left = PAD.left + axisGutter(tickLabels, yAxis)
     const plotW = Math.max(1, w - left - PAD.right)
 
-    const band = bandScale(times.length, plotW, 2, 24)
+    // A pair is two columns in one band, so it is allowed twice the width.
+    const band = bandScale(times.length, plotW, pair ? 8 : 2, pair ? 48 : 24)
+    // Where this week's bar sits within its band, and how wide it is: the
+    // whole band, or the right half of a pair with last week on the left.
+    const half = pair ? Math.max(1, (band.width - PAIR_GAP) / 2) : band.width
+    const barOff = pair ? band.width - half : 0
     const ys = linearScale([y0, y1], [PAD.top + plotH, PAD.top])
     const baseline = ys(y0)
-    const radius = Math.min(4, band.width / 2)
+    const radius = Math.min(4, half / 2)
 
     /**
      * Stack from the baseline up, as ONE bar.
@@ -169,12 +192,15 @@ export function BarChart({
       return { x: band.at(i), segs, top: below, ghost: ghostPoints ? baseline - ys(ghostPoints[i]) : 0 }
     })
 
+    // Thin the labels until they stop colliding: every column, every other…
+    const labelEvery = Math.max(1, Math.ceil(X_LABEL_W / band.step))
+
     return {
-      times, columns, band, baseline, stride, radius, left, ghostPoints,
+      times, columns, band, baseline, stride, radius, left, ghostPoints, half, barOff, labelEvery,
       gridlines: tickValues.map((v, i) => ({ v, y: ys(v), label: tickLabels[i] })),
       seriesMeta: reduced,
     }
-  }, [w, height, x, series, reducer, yTickCount, yAxis, formatTick, formatValue, ghost])
+  }, [w, height, x, series, reducer, yTickCount, yAxis, formatTick, formatValue, ghost, pair, bottom])
 
   const grain = useMemo(() => grainFor((x[x.length - 1] ?? 0) - (x[0] ?? 0)), [x])
 
@@ -272,6 +298,20 @@ export function BarChart({
               </g>
             ) : null}
 
+            {pair ? (
+              <g aria-hidden="true">
+                {model.columns.map((col, i) =>
+                  col.ghost <= 0.5 ? null : (
+                    <path
+                      key={`p${i}`}
+                      d={barPath(model.left + col.x, model.baseline - col.ghost, model.half, col.ghost, model.radius)}
+                      className="viz-ghost-pair"
+                    />
+                  ),
+                )}
+              </g>
+            ) : null}
+
             <g>
               {model.columns.map((col, i) => {
                 const base = Math.round(model.baseline)
@@ -280,15 +320,15 @@ export function BarChart({
                 return (
                 <g key={i} clipPath={`url(#${clip})`}>
                   <clipPath id={clip}>
-                    <path d={barPath(model.left + col.x, col.top, model.band.width, base - col.top, model.radius)} />
+                    <path d={barPath(model.left + col.x + model.barOff, col.top, model.half, base - col.top, model.radius)} />
                   </clipPath>
                   {col.segs.map((seg) =>
                     seg.h <= 0 ? null : (
                       <rect
                         key={seg.key}
-                        x={model.left + col.x}
+                        x={model.left + col.x + model.barOff}
                         y={seg.top}
-                        width={model.band.width}
+                        width={model.half}
                         height={seg.h}
                         fill={seg.color}
                         opacity={activeSeries != null && activeSeries !== seg.label ? 0.22 : 1}
@@ -306,6 +346,22 @@ export function BarChart({
               y1={model.baseline} y2={model.baseline}
               className="viz-axis-line"
             />
+
+            {xLabel && model.stride === 1 ? (
+              <g aria-hidden="true">
+                {model.times.map((t, i) => (i % model.labelEvery !== 0 ? null : (
+                  <text
+                    key={`x${i}`}
+                    x={model.left + (i + 0.5) * model.band.step}
+                    y={model.baseline + 14}
+                    className="viz-tick"
+                    textAnchor="middle"
+                  >
+                    {xLabel(t)}
+                  </text>
+                )))}
+              </g>
+            ) : null}
 
             {ghost && ghostMark === 'tick' ? (
               <g aria-hidden="true">

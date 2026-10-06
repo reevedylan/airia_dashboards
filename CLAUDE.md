@@ -483,9 +483,9 @@ The first version was a grid of KPI tiles and cards with a table in each,
 and it read as a second dashboard — an invitation to explore rather than a
 statement of what happened. So `WeeklyReport.tsx` deliberately does NOT
 compose `Card`, `StatTile` or the grid: one column at ~760px, sections
-parted by whitespace and a hairline, three rows of evidence at most, long
-lists cut to "and N more" (complete in the Markdown). Don't bring the cards
-back.
+parted by whitespace and a hairline, and short evidence lists — the top
+three by spend plus the week's big movers. The exception is new and no
+longer used, which lists every item. Don't bring the cards back.
 
 ### Takeaway headings are rules, not prose
 
@@ -511,10 +511,24 @@ separate bullet list; it would say everything twice.
   is noise. The amounts live in the rows, not the headings.
 - **A short note only where something needs defining.** `sectionNotes()`:
   who counts as a user (at least one gateway call; the service key counts
-  as one), the two totals behind the changes, and what "new" and "no
-  longer used" mean. Models get none — the heading carries the count. The
-  movers show name, bar and change only; a "last week → this week" column
-  was tried and cut as clutter — the Markdown table still has both weeks.
+  as one), and what "new" and "no longer used" mean. Models get none —
+  the heading carries the count. Last week's figure is not a column on the
+  page — the dollar and per-cent change say it — but the Markdown has it.
+- **One list per dimension, carrying share AND change.** There used to be
+  a top-three list (share) and a separate movers section (dollar change),
+  so the same model appeared twice, once as "−82%" and once as "−$411.72",
+  and the reader had to work out they were one fact. Now `lists` in
+  `buildReport` is the top three by spend PLUS any of the biggest movers
+  not already among them, with spend, $ change and % change on each row —
+  the dollar figure because −82% of $2 and of $500 are not the same news.
+  A departure is listed at $0 and −100%.
+- **What happened, then why.** The "what changed" takeaway (the
+  `changes` template) sits under the headline rather than heading its own
+  section, and the mover it names is always in a list below: `lists`
+  includes the biggest mover in the direction of the net change for
+  exactly that reason.
+- **The headline has all three measures**, spend, tokens and executions,
+  each with its change and last week's figure.
 - **A real cost is never shown as $0.00.** `amount()` writes `<$0.01` for
   anything above zero that rounds to nothing; "was $0.00" for a model that
   was used read as a contradiction.
@@ -559,22 +573,27 @@ separate bullet list; it would say everything twice.
 
 ### Visuals
 
-- **Every bar is neutral.** Spend bars in the sequential ramp; movers as a
-  diverging bar from a centre line in ONE colour — direction and size,
-  never red and green; the provider split as one stacked bar in the
-  validated slot order (no yellow), names and shares written beside it.
-- **Bars are drawn the dashboard's way.** The top users and models are the
-  breakdown table's row — `viz-rank__track`/`__bar`/`__pct`, share of the
-  TOTAL with the percentage beside it, and `RankChange` for the change, so
-  "New" and the arrows are one implementation, not two. The movers use the
-  same track and bar split down the middle, and the provider split is flush
-  like the dashboard's stacks. The memo layout stays; only the marks match.
-- **Last week is a TICK on the daily chart, not a ghost column.**
-  `BarChart`'s default ghost is a grey column behind the bar, which only
-  works when the ghost is the larger — the whole behind an isolated part.
-  Last week is often smaller, and the first version hid it completely
-  behind every bar while the legend promised a comparison.
-  `ghostMark="tick"` draws it as a line across the bar, on top. A
+- **Every bar is neutral.** Spend bars in the sequential ramp, change as
+  an arrow and a sign — direction and size, never red and green; the
+  provider split as one stacked bar in the validated slot order (no
+  yellow), with a row per provider naming its share, spend and change.
+- **Bars are drawn the dashboard's way.** Every list row is the breakdown
+  table's — `viz-rank__track`/`__bar`/`__pct`, share of the TOTAL with the
+  percentage beside it, and `RankChange` for the change, so "New" and the
+  arrows are one implementation, not two. The provider split is flush like
+  the dashboard's stacks.
+- **New and no longer used are two columns, grouped by kind under a count**
+  ("Models · 5", "Gateways · 2"), so every count in the heading has a
+  matching subheading, and EVERY row is listed, uncut. A mixed list cut at
+  three rows hid the gateways the heading promised inside an "and 4 more"
+  that could have belonged to either group; arrivals and departures are
+  what a reader scans this section for, so none is hidden. The memo layout stays; only the marks
+  match.
+- **Last week is a grey column BESIDE each day's bar** (`ghostMark="pair"`),
+  and every day is labelled (`xLabel`). The default ghost, a column
+  BEHIND the bar, hid last week whenever it was smaller. The tick that
+  replaced it floated above short bars, and alone over empty days, which
+  read as stray marks. Seven pairs have room to be read directly. A
   single-series `BarChart` tooltip also drops its "Total" row, which only
   restated the one value.
 

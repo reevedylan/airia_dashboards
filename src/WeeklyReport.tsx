@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { AxisExtent, BarChart, RankChange, ToolbarButton } from './components'
-import { ArrowDown, ArrowUp, Check, Copy } from './components/primitives/icons'
+import { BarChart, RankChange, ToolbarButton } from './components'
+import { Check, Copy } from './components/primitives/icons'
 import { other, series, type SeriesSlot } from './theme/palette'
 import {
-  amount, headlineContext, moverName, sectionNotes, signedMoney, takeaways, topMoves,
-  type Entry, type Mover, type Ranked, type ReportFormat, type WeeklyReport as Report,
+  amount, sectionNotes, signedMoney, takeaways,
+  type Ranked, type ReportFormat, type WeeklyReport as Report,
 } from './data/airia'
 
 export interface WeeklyReportProps {
@@ -27,9 +27,6 @@ export interface WeeklyReportProps {
  */
 const PROVIDER_SLOTS: readonly SeriesSlot[] = [1, 3, 2, 7, 5]
 const providerColor = (i: number) => (i < PROVIDER_SLOTS.length ? series(PROVIDER_SLOTS[i]) : other)
-
-/** How many names an inline list shows before "and N more". */
-const INLINE = 3
 
 /**
  * The weekly report, read top to bottom like a one-page memo.
@@ -54,78 +51,87 @@ export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, 
   }
 
   const t = takeaways(r, f)
-  const n = sectionNotes(r, f)
+  const n = sectionNotes(r)
   const { x, now: daily, before: dailyBefore } = r.daily
+  // "Tue 22 Sept" → "Tue 22": the month is in the kicker, and seven labels
+  // have to fit under seven pairs of bars.
+  const dayLabel = (d: number) => f.day(d).split(' ').slice(0, 2).join(' ')
 
   return (
     <article className="report" data-loading={loading ? '' : undefined} aria-label={`Weekly report, week of ${f.span(r.week)}`}>
       <header className="report__head">
         <p className="report__kicker">Week of {f.span(r.week)}</p>
         <h2 className="report__headline">{t.headline}</h2>
-        <p className="report__context">{headlineContext(r, f)}</p>
+        {/* What happened, then why: the mover this names is always in a
+            list below. */}
+        <p className="report__why">{t.changes}</p>
+        <dl className="report__figures">
+          <Figure label="Spend" value={f.money(r.now.spend)} now={r.now.spend} before={r.before.spend} was={f.money(r.before.spend)} />
+          <Figure label="Tokens" value={f.tokens(r.now.tokens)} now={r.now.tokens} before={r.before.tokens} was={f.tokens(r.before.tokens)} />
+          <Figure label="Executions" value={f.count(r.now.executions)} now={r.now.executions} before={r.before.executions} was={f.count(r.before.executions)} />
+        </dl>
         {markdown ? <CopyButton text={markdown} /> : null}
       </header>
 
       <Section title={t.daily}>
         <BarChart
           x={x}
-          height={130}
+          height={150}
           yTickCount={2}
           series={[{ key: 'now', label: 'This week', color: series(1), values: daily }]}
           ghost={{ label: 'Last week', values: dailyBefore }}
-          ghostMark="tick"
+          ghostMark="pair"
+          xLabel={dayLabel}
           formatValue={(n) => f.money(n)}
           formatTick={(n) => f.money(n).replace(/\.\d+$/, '')}
           formatX={f.day}
         />
-        <AxisExtent from={f.day(x[0])} to={f.day(x[x.length - 1])} />
         <p className="report__note">
           <span className="report__key report__key--bar" /> this week
-          <span className="report__key report__key--tick" /> last week
+          <span className="report__key report__key--ghost" /> last week
         </p>
       </Section>
 
       <Section title={t.users} note={n.users}>
-        <Bars rows={r.topUsers} format={f} empty="No user spend this week." />
+        <Bars label="User" rows={r.lists.users} format={f} empty="No user spend this week." />
       </Section>
 
       <Section title={t.models} note={n.models}>
-        <Bars rows={r.topModels} format={f} empty="No model spend this week." />
-      </Section>
-
-      <Section title={t.changes} note={n.changes}>
-        <Moves label="By model" rows={topMoves(r.movers.models)} format={f} />
-        <Moves label="By user" rows={topMoves(r.movers.users)} format={f} />
+        <Bars label="Model" rows={r.lists.models} format={f} empty="No model spend this week." />
       </Section>
 
       <Section title={t.newAndDropped} note={n.newAndDropped}>
-        <Inline label="New models" rows={r.added.models} format={f} />
-        <Inline label="New users" rows={r.added.users} format={f} />
-        <Inline label="New gateways" rows={r.added.gateways} format={f} name={f.gateway} />
-        <Inline label="Models no longer used" rows={r.removed.models} format={f} was />
-        <Inline label="Users no longer used" rows={r.removed.users} format={f} was />
-        <Inline label="Gateways no longer used" rows={r.removed.gateways} format={f} name={f.gateway} was />
+        <Arrivals r={r} format={f} />
       </Section>
 
       <Section title={t.providers}>
         {r.providers.length === 0 ? null : (
           <>
-            {/* Names and shares are written out beside the bar, so identity
-                never rests on colour alone. */}
             <div className="report__split viz-rank__track" aria-hidden="true">
               {r.providers.map((p, i) => p.share > 0 ? (
                 <span key={p.key} style={{ flexGrow: p.share, background: providerColor(i) }} />
               ) : null)}
             </div>
-            <p className="report__legend">
-              {r.providers.map((p, i) => (
-                <span key={p.key}>
-                  <span className="report__swatch" style={{ background: providerColor(i) }} aria-hidden="true" />
-                  {p.key} <strong>{f.pct(p.share)}</strong>
-                  {p.spend <= 0 && p.before > 0 ? <em> (was {f.money(p.before)})</em> : null}
-                </span>
-              ))}
-            </p>
+            {/* Names, shares and change written out, so identity never rests
+                on colour alone. */}
+            <div className="report__grid report__grid--providers">
+              <p className="report__label report__head-row" aria-hidden="true">
+                <span>Provider</span><span>Share</span><span>Spend</span><span>% change</span>
+              </p>
+              <ol className="report__rows">
+                {r.providers.map((p, i) => (
+                  <li key={p.key}>
+                    <span className="report__name">
+                      <span className="report__swatch" style={{ background: providerColor(i) }} aria-hidden="true" />
+                      {p.key}
+                    </span>
+                    <span className="report__muted report__right">{f.pct(p.share)}</span>
+                    <span className="report__num">{amount(p.spend, f)}</span>
+                    <span className="report__right"><RankChange value={changeOf(p.spend, p.before)} /></span>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </>
         )}
       </Section>
@@ -134,6 +140,25 @@ export function WeeklyReport({ report: r, loading, format: f, scopeLabel, zone, 
         Monday to Sunday, {zone}.{scopeLabel ? ` Filtered to ${scopeLabel}.` : ''} The Markdown copy has the full lists.
       </footer>
     </article>
+  )
+}
+
+/** A change as a fraction for `RankChange`: new from nothing, null when
+ *  there was nothing either week. */
+const changeOf = (now: number, before: number): number | 'new' | null =>
+  before > 0 ? (now - before) / before : now > 0 ? 'new' : null
+
+/** One of the three headline measures, with its change and last week's. */
+function Figure({ label, value, now, before, was }: { label: string; value: string; now: number; before: number; was: string }) {
+  return (
+    <div className="report__figure">
+      <dt>{label}</dt>
+      <dd>
+        <span className="report__figval">{value}</span>
+        <RankChange value={changeOf(now, before)} />
+      </dd>
+      <dd className="report__figwas">was {was}</dd>
+    </div>
   )
 }
 
@@ -149,24 +174,25 @@ function Section({ title, note, children }: { title: string; note?: string; chil
 }
 
 /**
- * Name, share of the week's total, spend and change — the dashboard's
- * breakdown row. The bar is a share of the TOTAL, not of the largest row:
- * scaled to the largest, the top row always filled its track and read as
- * all of the spend.
+ * Name, share of the week's total, spend, and change in dollars and per
+ * cent — the dashboard's breakdown row, plus the dollar figure that says
+ * how much a change MATTERED: −82% of $2 and −82% of $500 are not the same
+ * news. One list per dimension, so a name never appears twice with two
+ * kinds of change. The bar is a share of the TOTAL, never of the largest
+ * row.
  */
-function Bars({ rows, format: f, empty }: { rows: Ranked[]; format: ReportFormat; empty: string }) {
+function Bars({ label, rows, format: f, empty }: { label: string; rows: Ranked[]; format: ReportFormat; empty: string }) {
   if (rows.length === 0) return <p className="report__none">{empty}</p>
   return (
-    <div>
-      <p className="report__label report__barhead" aria-hidden="true">
-        <span />
-        <span>Share of total</span>
-        <span>Spend</span>
-        <span>Change</span>
+    <div className="report__grid report__grid--bars">
+      <p className="report__label report__head-row" aria-hidden="true">
+        <span>{label}</span><span>Share of total</span><span>Spend</span><span>$ change</span><span>% change</span>
       </p>
-      <ol className="report__bars">
+      <ol className="report__rows">
         {rows.map((e) => (
           <li key={e.key}>
+            {/* A departure is listed at $0 and −100%, which says it; it is
+                also under "no longer used" below. */}
             <span className="report__name" title={e.key}>{e.key}</span>
             <span className="viz-rank__share">
               <span className="viz-rank__track" aria-hidden="true">
@@ -175,9 +201,8 @@ function Bars({ rows, format: f, empty }: { rows: Ranked[]; format: ReportFormat
               <span className="viz-rank__pct">{f.pct(e.share)}</span>
             </span>
             <span className="report__num">{amount(e.spend, f)}</span>
-            <span className="report__change">
-              <RankChange value={e.before > 0 ? (e.spend - e.before) / e.before : 'new'} />
-            </span>
+            <span className="report__right report__muted report__tab">{signedMoney(e.change, f.money)}</span>
+            <span className="report__right"><RankChange value={changeOf(e.spend, e.before)} /></span>
           </li>
         ))}
       </ol>
@@ -185,56 +210,55 @@ function Bars({ rows, format: f, empty }: { rows: Ranked[]; format: ReportFormat
   )
 }
 
-/** Changes as a diverging bar from a centre line, one colour: increases
- *  right, decreases left, scaled to the largest change in the list. */
-function Moves({ label, rows, format: f }: { label: string; rows: Mover[]; format: ReportFormat }) {
-  if (rows.length === 0) return null
-  const max = Math.max(...rows.map((m) => Math.abs(m.change)), 1e-9)
+/**
+ * New and no longer used, side by side.
+ *
+ * Grouped by kind, each kind under its own count, so the heading's "5 new
+ * models, 2 new gateways" can be found in the rows beneath it. The first
+ * version was one mixed list cut at three rows: the gateways the heading
+ * promised sat inside an "and 4 more" that could have belonged to either
+ * group, and every row repeated "Model" and a badge. Now the column says
+ * which side a row is on, and every row is listed: an arrival or a
+ * departure is exactly what a reader scans this section for, so none is
+ * hidden behind a "more".
+ */
+function Arrivals({ r, format: f }: { r: Report; format: ReportFormat }) {
+  const kinds = (g: Report['added']) => [
+    { kind: 'Models', rows: g.models.map((e) => ({ key: e.key, name: e.key, spend: e.spend })) },
+    { kind: 'Users', rows: g.users.map((e) => ({ key: e.key, name: e.key, spend: e.spend })) },
+    { kind: 'Gateways', rows: g.gateways.map((e) => ({ key: e.key, name: f.gateway(e.key), spend: e.spend })) },
+  ].filter((k) => k.rows.length > 0)
+  const sides = [
+    { title: 'New', amount: 'This week', kinds: kinds(r.added), none: 'Nothing new.' },
+    { title: 'No longer used', amount: 'Last week', kinds: kinds(r.removed), none: 'Nothing stopped.' },
+  ]
+  if (sides.every((s) => s.kinds.length === 0)) return null
   return (
-    <div className="report__moves">
-      <p className="report__label report__movehead">
-        <span>{label}</span>
-        <span>Change</span>
-      </p>
-      <ol className="report__bars report__bars--moves">
-        {rows.map((m) => (
-          <li key={m.key}>
-            <span className="report__name" title={moverName(m)}>{moverName(m)}</span>
-            <span className="report__diverge viz-rank__track" aria-hidden="true">
-              <span
-                className="report__divbar viz-rank__bar"
-                data-dir={m.change > 0 ? 'up' : 'down'}
-                style={{ width: `${Math.max(1, (Math.abs(m.change) / max) * 50)}%` }}
-              />
-            </span>
-            <span className="report__num viz-rank__delta">
-              {m.change > 0 ? <ArrowUp size={14} /> : <ArrowDown size={14} />}
-              {signedMoney(m.change, f.money)}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  )
-}
-
-/** "New models: a ($1), b ($2), c ($3) and 4 more" — nothing when empty. */
-function Inline({ label, rows, format: f, name = (k) => k, was = false }: {
-  label: string; rows: Entry[]; format: ReportFormat; name?: (k: string) => string; was?: boolean
-}) {
-  if (rows.length === 0) return null
-  const shown = rows.slice(0, INLINE)
-  const more = rows.length - shown.length
-  return (
-    <p className="report__inline">
-      <span className="report__label">{label}</span>
-      {shown.map((e, i) => (
-        <span key={e.key}>
-          {i > 0 ? ', ' : ''}{name(e.key)} <span className="report__muted">({was ? 'was ' : ''}{amount(e.spend, f)})</span>
-        </span>
+    <div className="report__arrivals">
+      {sides.map((side) => (
+        <div className="report__side" key={side.title}>
+          <p className="report__label report__sidehead">
+            <span>{side.title}</span>
+            <span>{side.amount}</span>
+          </p>
+          {side.kinds.length === 0 ? <p className="report__none">{side.none}</p> : side.kinds.map((k) => {
+            return (
+              <div className="report__kind" key={k.kind}>
+                <p className="report__kindhead">{k.kind} <span className="report__muted">· {k.rows.length}</span></p>
+                <ol className="report__rows report__rows--arrivals">
+                  {k.rows.map((e) => (
+                    <li key={e.key}>
+                      <span className="report__name" title={e.name}>{e.name}</span>
+                      <span className="report__num">{amount(e.spend, f)}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )
+          })}
+        </div>
       ))}
-      {more > 0 ? <span className="report__muted"> and {more} more</span> : null}
-    </p>
+    </div>
   )
 }
 
