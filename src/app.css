@@ -195,34 +195,52 @@ body {
   color: var(--viz-text-primary); letter-spacing: -0.01em;
 }
 .gate__lead { margin: 0 0 20px; font: 400 13px/1.55 var(--viz-font); color: var(--viz-text-secondary); }
-.gate__label { font: 500 12px/1 var(--viz-font); color: var(--viz-text-secondary); margin-bottom: 7px; }
+.gate__field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.gate__label { font: 500 12px/1 var(--viz-font); color: var(--viz-text-secondary); }
+/* One box for every control, select included: a fixed height and the same
+   inset, so text in the region menu and the key field starts on one line. */
 .gate__input {
+  box-sizing: border-box; width: 100%; height: 42px; margin: 0;
   font: 400 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--viz-text-primary);
   background: var(--viz-surface-sunken);
   border: 1px solid var(--viz-border);
   border-radius: var(--viz-radius-ctl);
-  padding: 12px 13px; outline: none;
+  padding: 0 13px; outline: none;
 }
 .gate__input:focus { border-color: var(--viz-focus); }
+/* The native arrow sits flush against the edge and differs per browser, so
+   it is drawn here instead, inset by the same 13px as the text. */
+.gate__select { position: relative; }
+.gate__select select {
+  appearance: none; -webkit-appearance: none;
+  font-family: var(--viz-font); padding-right: 36px; cursor: pointer;
+}
+.gate__select::after {
+  content: ''; position: absolute; right: 15px; top: 50%;
+  width: 6px; height: 6px; margin-top: -5px;
+  border: solid var(--viz-text-secondary); border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg); pointer-events: none;
+}
 .gate__hint {
-  margin: 7px 0 16px; min-height: 1.4em;
+  margin: 0;
   font: 400 11.5px/1.4 var(--viz-font); color: var(--viz-text-muted);
 }
-.gate__hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--viz-text-secondary); }
+.gate__hint code { font: 400 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--viz-text-secondary); margin-left: 4px; }
 .gate__remember {
-  display: flex; align-items: center; gap: 8px; margin-top: 14px;
+  display: flex; align-items: center; gap: 8px; margin-top: 4px;
   font: 400 12.5px/1 var(--viz-font); color: var(--viz-text-secondary); cursor: pointer;
 }
+.gate__remember input { margin: 0; }
 .gate__error {
-  margin: 14px 0 0; padding: 10px 12px;
+  margin: 0 0 20px; padding: 10px 12px;
   background: var(--viz-surface-sunken);
   border-left: 3px solid var(--viz-status-critical);
   border-radius: 4px;
   font: 400 12.5px/1.5 var(--viz-font); color: var(--viz-text-primary);
 }
 .gate__submit {
-  margin-top: 18px; padding: 12px;
+  height: 42px; padding: 0 12px;
   font: 600 13px/1 var(--viz-font); color: #fff;
   background: var(--viz-seq-400);
   border: 0; border-radius: var(--viz-radius-ctl); cursor: pointer;

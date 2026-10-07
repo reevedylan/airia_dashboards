@@ -1,5 +1,7 @@
-import { useId, useState } from 'react'
-import { apiHost, envName, KNOWN_ENVIRONMENTS } from '../../lib/airia/endpoint'
+import { useState } from 'react'
+import { apiHost, envName, regionOf, REGIONS } from '../../lib/airia/endpoint'
+
+const CUSTOM = 'custom'
 
 export interface KeyGateProps {
   onSubmit: (key: string, remember: boolean, host: string) => void
@@ -18,18 +20,21 @@ export interface KeyGateProps {
  * tenant data is written to disk — the key stays in this tab and the figures
  * are built in the browser.
  *
- * A key is also scoped to one ENVIRONMENT — the shared cloud or a cloud-prem
- * customer's own — so the gate asks for that beside it. The field takes the
- * address people log in at (`https://example.airia.ai`) or just its name,
- * and shows the API host it resolved to, so a typo is visible before the
- * key is sent anywhere.
+ * A key is also scoped to one ENVIRONMENT, so the gate asks for that
+ * beside it: one of Airia's SaaS regions from a menu, or Custom for a
+ * customer's own. Custom takes the address people log in at
+ * (`https://example.airia.ai`) or just its name. Either way the API host it
+ * resolves to is shown, so a typo is visible before the key is sent
+ * anywhere.
  */
 export function KeyGate({ onSubmit, initialHost, busy, error }: KeyGateProps) {
   const [value, setValue] = useState('')
   const [remember, setRemember] = useState(false)
-  const [env, setEnv] = useState(() => envName(initialHost))
-  const host = apiHost(env)
-  const listId = useId()
+  /* A region's host, or CUSTOM. A remembered custom host reopens as
+     Custom with its name filled in. */
+  const [region, setRegion] = useState(() => regionOf(initialHost)?.host ?? CUSTOM)
+  const [custom, setCustom] = useState(() => (regionOf(initialHost) ? '' : envName(initialHost)))
+  const host = region === CUSTOM ? apiHost(custom) : region
   const ready = value.trim() !== '' && host != null
 
   return (
@@ -44,48 +49,68 @@ export function KeyGate({ onSubmit, initialHost, busy, error }: KeyGateProps) {
           dashboard for whichever tenant the key belongs to.
         </p>
 
-        <label className="gate__label" htmlFor="airia-env">Environment</label>
-        <input
-          id="airia-env"
-          className="gate__input"
-          type="text"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="prodaus, or https://yourco.airia.ai"
-          list={listId}
-          value={env}
-          disabled={!!busy}
-          onChange={(e) => setEnv(e.target.value)}
-        />
-        <datalist id={listId}>
-          {KNOWN_ENVIRONMENTS.map((k) => <option key={k.host} value={envName(k.host)}>{k.label}</option>)}
-        </datalist>
-        <p className="gate__hint" aria-live="polite">
-          {host ? <>API: <code>{host}</code></> : env.trim() ? 'Not a host name.' : 'The address you log in to Airia at.'}
-        </p>
+        {/* Every field is a group — label, control(s), optional hint — and
+            groups are spaced by one gap, so a hint under a control cannot
+            push the next label further down than the others sit. */}
+        <div className="gate__field">
+          <label className="gate__label" htmlFor="airia-region">Region</label>
+          <div className="gate__select">
+            <select
+              id="airia-region"
+              className="gate__input"
+              value={region}
+              disabled={!!busy}
+              onChange={(e) => setRegion(e.target.value)}
+            >
+              {REGIONS.map((r) => <option key={r.host} value={r.host}>{r.flag} {r.label}</option>)}
+              <option value={CUSTOM}>Custom…</option>
+            </select>
+          </div>
+          {region === CUSTOM ? (
+            <input
+              id="airia-env"
+              className="gate__input"
+              type="text"
+              aria-label="Custom environment address"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://yourco.airia.ai"
+              value={custom}
+              disabled={!!busy}
+              autoFocus
+              onChange={(e) => setCustom(e.target.value)}
+            />
+          ) : null}
+          <p className="gate__hint" aria-live="polite">
+            {host ? <>API <code>{host}</code></>
+              : custom.trim() ? 'Not a host name.'
+              : 'The address you log in to Airia at.'}
+          </p>
+        </div>
 
-        <label className="gate__label" htmlFor="airia-key">API key</label>
-        <input
-          id="airia-key"
-          className="gate__input"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="akey_…"
-          value={value}
-          disabled={!!busy}
-          onChange={(e) => setValue(e.target.value)}
-        />
-
-        <label className="gate__remember">
+        <div className="gate__field">
+          <label className="gate__label" htmlFor="airia-key">API key</label>
           <input
-            type="checkbox"
-            checked={remember}
+            id="airia-key"
+            className="gate__input"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="akey_…"
+            value={value}
             disabled={!!busy}
-            onChange={(e) => setRemember(e.target.checked)}
+            onChange={(e) => setValue(e.target.value)}
           />
-          Remember for this browser tab
-        </label>
+          <label className="gate__remember">
+            <input
+              type="checkbox"
+              checked={remember}
+              disabled={!!busy}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            Remember for this browser tab
+          </label>
+        </div>
 
         {error ? <p className="gate__error" role="alert">{error}</p> : null}
 

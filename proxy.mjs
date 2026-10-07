@@ -4,8 +4,8 @@
  * The Airia API sends no Access-Control-Allow-Origin header, so the page
  * calls `/airia/...` on its own origin and this forwards it. Which Airia
  * environment it forwards to is chosen PER REQUEST, by the page, in the
- * `x-airia-host` header: prodaus for the shared cloud, `<name>.api.airia.ai`
- * for a cloud-prem customer. One running copy serves any of them, so
+ * `x-airia-host` header: one of Airia's SaaS regions, or a cloud-prem
+ * customer's own `<name>.api.airia.ai`. One running copy serves any of them, so
  * switching environment is a choice on the key page rather than a restart.
  *
  * The host is checked against an allowlist before anything is sent. This
@@ -15,7 +15,8 @@
  * separated) for a deployment on a customer's own domain.
  */
 
-export const DEFAULT_HOST = 'prodaus.api.airia.ai'
+/** US East, the page's default region, for a request that names none. */
+export const DEFAULT_HOST = 'api.airia.ai'
 
 const EXTRA = new Set(
   (process.env.AIRIA_EXTRA_HOSTS ?? '')

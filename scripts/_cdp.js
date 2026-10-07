@@ -13,10 +13,12 @@
 
 const PORT = process.env.CHROME_PORT ?? 9222
 
-/** `example` or `https://example.airia.ai` → `example.api.airia.ai`,
- *  as `apiHost()` in src/lib/airia/endpoint.ts does for the page. */
+/** `example` or `https://example.airia.ai` → `example.api.airia.ai`, and
+ *  `airia.ai` → `api.airia.ai` (the US region has no subdomain), as
+ *  `apiHost()` in src/lib/airia/endpoint.ts does for the page. */
 const apiHostOf = (s) => {
   const h = s.trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[/:?#].*$/, '')
+  if (h === 'airia.ai' || h === 'www.airia.ai' || h === 'api.airia.ai') return 'api.airia.ai'
   if (!h.includes('.')) return `${h}.api.airia.ai`
   return h.endsWith('.api.airia.ai') || !h.endsWith('.airia.ai') ? h : h.replace(/\.airia\.ai$/, '.api.airia.ai')
 }
@@ -74,8 +76,8 @@ export async function connect() {
      *  visible in `ps` and lands in shell history. */
     seedKey: () => process.env.AIRIA_API_KEY
       ? send('Page.addScriptToEvaluateOnNewDocument', {
-          // AIRIA_HOST picks the environment (`example`, or the API host);
-          // unset means prodaus, the page's own default.
+          // AIRIA_HOST picks the environment (`prodaus`, `eu1`, a customer's
+          // name, or the API host); unset means US East, the page's default.
           source: `try { sessionStorage.setItem('airia-api-key', ${JSON.stringify(process.env.AIRIA_API_KEY)})${
             process.env.AIRIA_HOST ? `; sessionStorage.setItem('airia-host', ${JSON.stringify(apiHostOf(process.env.AIRIA_HOST))})` : ''
           } } catch {}`,
