@@ -1,3 +1,5 @@
+import { airiaHeaders, type Connection } from './endpoint'
+
 /**
  * The name of the tenant a key belongs to, so the page says whose data it
  * is showing. Every tenant's dashboard is otherwise identical, and a
@@ -11,11 +13,11 @@
  * or a shape this does not recognise, yields null and the page simply
  * names no tenant. Only the name is kept.
  */
-export async function fetchTenantName(key: string, signal?: AbortSignal): Promise<string | null> {
+export async function fetchTenantName(conn: Connection, signal?: AbortSignal): Promise<string | null> {
   try {
     const res = await fetch('/airia/v1/Tenants', {
       signal,
-      headers: { 'x-api-key': key, accept: 'application/json' },
+      headers: airiaHeaders(conn),
     })
     if (!res.ok) return null
     const body = (await res.json()) as unknown

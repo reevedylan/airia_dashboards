@@ -1,3 +1,4 @@
+import { airiaHeaders, type Connection } from './endpoint'
 import { NO_GATEWAY } from './aggregate'
 
 /**
@@ -78,13 +79,13 @@ function readNames(payload: unknown, into: Map<string, string>): number {
   return list.length
 }
 
-export async function fetchGatewayNames(key: string, signal?: AbortSignal): Promise<GatewayNames> {
+export async function fetchGatewayNames(conn: Connection, signal?: AbortSignal): Promise<GatewayNames> {
   const raw = new Map<string, string>()
   try {
     for (let page = 1; page <= MAX_PAGES; page++) {
       const res = await fetch(
         `/airia/v1/GatewayConfiguration?PageNumber=${page}&PageSize=${PAGE_SIZE}`,
-        { signal, headers: { 'x-api-key': key, accept: 'application/json' } },
+        { signal, headers: airiaHeaders(conn) },
       )
       // A key without this permission answers 401/403, which is an ordinary
       // outcome here and not worth surfacing: ids are a usable fallback.

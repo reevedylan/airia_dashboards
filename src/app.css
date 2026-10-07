@@ -205,6 +205,11 @@ body {
   padding: 12px 13px; outline: none;
 }
 .gate__input:focus { border-color: var(--viz-focus); }
+.gate__hint {
+  margin: 7px 0 16px; min-height: 1.4em;
+  font: 400 11.5px/1.4 var(--viz-font); color: var(--viz-text-muted);
+}
+.gate__hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--viz-text-secondary); }
 .gate__remember {
   display: flex; align-items: center; gap: 8px; margin-top: 14px;
   font: 400 12.5px/1 var(--viz-font); color: var(--viz-text-secondary); cursor: pointer;

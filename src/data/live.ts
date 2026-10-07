@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { aggregate, earliestBoundary, prefetchBoundary, SERVICE_KEY,
          type AggregateResult, type Grains, type RangeMap, type RangeName, type RawRow } from '../lib/airia/aggregate'
 import { fetchAll, probe, AuthError, BACKGROUND_CONCURRENCY, type Progress } from '../lib/airia/fetchAll'
+import type { Connection } from '../lib/airia/endpoint'
 import { ZONE, DAY_MS, RETENTION_MS, customSpec, customPrevFrom, reportSpec, type DayRange } from './window'
 
 /**
@@ -144,7 +145,9 @@ export interface GrainPick {
 }
 
 export function useAiriaLive(
-  key: string | null,
+  /** Stable per (key, host) — `useApiKey` memoises it — so it can be a
+   *  dependency and a cache key by identity. */
+  conn: Connection | null,
   anchor: number | null,
   custom: DayRange | null = null,
   grain: GrainPick | null = null,
@@ -164,7 +167,7 @@ export function useAiriaLive(
   const [state, setState] = useState<LoadState>({ status: 'idle', data: null })
   const run = useRef(0)
   /** Raw rows kept so a different anchor is a re-fold, not a re-fetch. */
-  const cache = useRef<{ key: string; rows: RawRow[]; from: number; to: number } | null>(null)
+  const cache = useRef<{ conn: Connection; rows: RawRow[]; from: number; to: number } | null>(null)
   /** The last good fold, held under a refetch so the page never goes blank. */
   const held = useRef<AiriaData | null>(null)
   /**
@@ -183,7 +186,7 @@ export function useAiriaLive(
   stepBackRef.current = stepBack
 
   useEffect(() => {
-    if (!key) {
+    if (!conn) {
       setState({ status: 'idle', data: null })
       cache.current = null
       held.current = null
@@ -241,7 +244,7 @@ export function useAiriaLive(
         const reportFrom = rspec ? rspec.previous.from : Infinity
         const needFrom = Math.max(Math.min(earliestBoundary(at, ZONE, grains), customFrom, reportFrom), floor)
 
-        if (cache.current?.key !== key) {
+        if (cache.current?.conn !== conn) {
           cache.current = null
           held.current = null
         }
@@ -284,26 +287,26 @@ export function useAiriaLive(
             const firstFrom = stepBackRef.current == null ? needFrom
               : Math.max(Math.min(needFrom, earliestBoundary(stepBackRef.current, ZONE, grains)), floor)
             show({ message: 'Checking the key…' })
-            expected = await probe(key, firstFrom, wallNow)
+            expected = await probe(conn, firstFrom, wallNow)
             if (!live()) return
             show({ message: 'Fetching executions…' })
-            const { rows } = await fetchAll(key, firstFrom, wallNow, {
+            const { rows } = await fetchAll(conn, firstFrom, wallNow, {
               onProgress: (p) => { if (live()) show({ message: 'Fetching executions…', progress: p }) },
               signal: ctrl.signal,
             })
             if (!live()) return
-            cache.current = { key, rows, from: firstFrom, to: wallNow }
+            cache.current = { conn, rows, from: firstFrom, to: wallNow }
           } else if (needFrom < cache.current.from) {
             // Stepped back past what is cached: fetch only the missing older
             // slice and prepend it, rather than refetching the whole span.
             const gapTo = cache.current.from
             show({ message: 'Fetching earlier executions…' })
-            const { rows } = await fetchAll(key, needFrom, gapTo, {
+            const { rows } = await fetchAll(conn, needFrom, gapTo, {
               onProgress: (p) => { if (live()) show({ message: 'Fetching earlier executions…', progress: p }) },
               signal: ctrl.signal,
             })
             if (!live()) return
-            cache.current = { key, rows: rows.concat(cache.current.rows), from: needFrom, to: cache.current.to }
+            cache.current = { conn, rows: rows.concat(cache.current.rows), from: needFrom, to: cache.current.to }
           }
         })
         if (!live()) return
@@ -372,7 +375,7 @@ export function useAiriaLive(
             await exclusive(async () => {
               // The foreground may have moved the cache while this waited.
               if (!live() || slice.signal.aborted || !cache.current || cache.current.from <= from) return
-              const { rows } = await fetchAll(key, from, cache.current.from, {
+              const { rows } = await fetchAll(conn, from, cache.current.from, {
                 signal: slice.signal,
                 concurrency: BACKGROUND_CONCURRENCY,
               })
@@ -387,7 +390,7 @@ export function useAiriaLive(
                * same span again. Liveness governs what is on SCREEN; it has
                * no bearing on whether a fetched row is true.
                */
-              if (slice.signal.aborted || cache.current?.key !== key || cache.current.from <= from) return
+              if (slice.signal.aborted || cache.current?.conn !== conn || cache.current.from <= from) return
               cache.current = {
                 ...cache.current,
                 rows: rows.concat(cache.current.rows),
@@ -424,7 +427,7 @@ export function useAiriaLive(
     // Depends on the custom range's ENDS and the grain's VALUE, not their
     // object identities, so a re-render with an equal one does not refold.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, anchor, custom?.from, custom?.to, grain?.window, grain?.bucketMs, report?.from])
+  }, [conn, anchor, custom?.from, custom?.to, grain?.window, grain?.bucketMs, report?.from])
 
   return state
 }

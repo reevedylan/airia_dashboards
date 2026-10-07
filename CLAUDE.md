@@ -995,12 +995,39 @@ cannot call it directly — a cross-origin `fetch` fails and the preflight for
 `x-api-key` returns 403. Verified, not assumed. So:
 
 ```
-browser --/airia/...--> same origin --> proxy --> prodaus.api.airia.ai
-                     (no CORS)          (Vite in dev, server.mjs in prod)
+browser --/airia/...--> same origin --> proxy.mjs --> <env>.api.airia.ai
+          x-airia-host  (no CORS)       (Vite plugin in dev, server.mjs in prod)
 ```
 
-Both proxies exist for that one reason. Don't "simplify" by calling the API
+The proxy exists for that one reason. Don't "simplify" by calling the API
 directly from the client; it cannot work until CORS is enabled upstream.
+
+### Which environment
+
+A key belongs to one tenant in ONE environment — prodaus, or a cloud-prem
+customer's own (`example.airia.ai`, say). So the key gate asks for the
+environment beside the key, and the two travel together as a `Connection`
+(`src/lib/airia/endpoint.ts`) into every fetch, hook and cache key. The
+page sends the API host in `x-airia-host`; `proxy.mjs`, shared by Vite and
+`server.mjs`, picks the upstream per request, so one running copy serves
+every environment.
+
+- **People type the address they log in at**, and the API is on a
+  different host: `example.airia.ai` is served from
+  `example.api.airia.ai`. `apiHost()` maps one to the other, accepts a
+  bare name or a full URL, and the gate shows the resolved host before
+  anything is sent.
+- **The proxy allowlists the host** — `*.airia.ai`, plus
+  `AIRIA_EXTRA_HOSTS` for a customer's own domain. It forwards the caller's
+  key, so forwarding to any host the page names would make it a relay for
+  stealing keys.
+- **The cache is keyed on the `Connection` by identity**, which is why
+  `useApiKey` memoises it on (key, host). The same key on another
+  environment is a different tenant's rows.
+- A host the proxy refuses (400) or cannot reach (502) is treated like a
+  rejected key: back to the gate, with the proxy's reason.
+- The checks take `AIRIA_HOST` (`example` or a full host) beside
+  `AIRIA_API_KEY`; unset means prodaus.
 
 `server.mjs` binds to 127.0.0.1 on purpose: it forwards whatever key the page
 sends, so hosting it for other people would expose their keys. Each tenant runs

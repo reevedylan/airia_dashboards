@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { RangeBlock } from '../lib/airia/aggregate'
 import { fetchGatewayNames, type GatewayNames } from '../lib/airia/gateways'
 import { fetchTenantName } from '../lib/airia/tenant'
+import type { Connection } from '../lib/airia/endpoint'
 import type { AiriaData } from './live'
 
 export interface Series {
@@ -323,20 +324,20 @@ export function useAllGateways(data: AiriaData | null): string[] {
 }
 
 /**
- * Gateway names, fetched once per key, in the background.
+ * Gateway names, fetched once per key and environment, in the background.
  *
  * Deliberately outside the load state: the dashboard does not wait for it
  * and does not fail with it. Names arrive late and labels re-render; if
  * they never arrive, short ids stand in.
  */
-export function useGatewayNames(key: string | null): GatewayNames {
+export function useGatewayNames(conn: Connection | null): GatewayNames {
   const [names, setNames] = useState<GatewayNames>({})
   useEffect(() => {
-    if (!key) { setNames({}); return }
+    if (!conn) { setNames({}); return }
     const ctrl = new AbortController()
-    fetchGatewayNames(key, ctrl.signal).then((n) => { if (!ctrl.signal.aborted) setNames(n) })
+    fetchGatewayNames(conn, ctrl.signal).then((n) => { if (!ctrl.signal.aborted) setNames(n) })
     return () => ctrl.abort()
-  }, [key])
+  }, [conn])
   return names
 }
 
@@ -345,14 +346,14 @@ export function useGatewayNames(key: string | null): GatewayNames {
  * until it lands, and for good if the lookup fails. Outside the load state
  * for the same reason as the gateway names: nothing waits on it.
  */
-export function useTenantName(key: string | null): string | null {
+export function useTenantName(conn: Connection | null): string | null {
   const [name, setName] = useState<string | null>(null)
   useEffect(() => {
     setName(null)
-    if (!key) return
+    if (!conn) return
     const ctrl = new AbortController()
-    fetchTenantName(key, ctrl.signal).then((n) => { if (!ctrl.signal.aborted) setName(n) })
+    fetchTenantName(conn, ctrl.signal).then((n) => { if (!ctrl.signal.aborted) setName(n) })
     return () => ctrl.abort()
-  }, [key])
+  }, [conn])
   return name
 }

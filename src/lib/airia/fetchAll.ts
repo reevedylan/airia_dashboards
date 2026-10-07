@@ -1,4 +1,5 @@
 import { slim, type RawRow } from './aggregate'
+import { airiaHeaders, type Connection } from './endpoint'
 
 /**
  * Fetches AIOperationExecutions through the page's own origin.
@@ -6,7 +7,8 @@ import { slim, type RawRow } from './aggregate'
  * The Airia API sends no Access-Control-Allow-Origin header, so the browser
  * cannot call it directly whatever key you hold — the request goes to
  * `/airia/...` on this origin and a proxy (Vite in dev, `server.mjs` in
- * production) forwards it. The key travels in the request header only; it is
+ * production) forwards it to the environment named in `x-airia-host`. The
+ * key travels in the request header only; it is
  * never put in a URL, where it would land in logs and history.
  */
 
@@ -46,14 +48,14 @@ export class AuthError extends Error {}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-async function requestWindow(key: string, start: number, end: number, signal?: AbortSignal): Promise<RawRow[]> {
+async function requestWindow(conn: Connection, start: number, end: number, signal?: AbortSignal): Promise<RawRow[]> {
   const url = `${BASE}?startTime=${start}&endTime=${end}&limit=${PAGE_LIMIT}&offset=0&descending=false`
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), REQ_TIMEOUT_MS)
   const onAbort = () => ctrl.abort()
   signal?.addEventListener('abort', onAbort)
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { 'x-api-key': key, accept: 'application/json' } })
+    const res = await fetch(url, { signal: ctrl.signal, headers: airiaHeaders(conn) })
 
     if (res.status === 401 || res.status === 403) throw new AuthError(`The key was rejected (HTTP ${res.status}).`)
 
@@ -101,10 +103,10 @@ async function requestWindow(key: string, start: number, end: number, signal?: A
  * two-second dead patch between changing the window and the page admitting
  * it was doing anything — and it re-sent requests nobody wanted any more.
  */
-async function withRetry(key: string, start: number, end: number, signal?: AbortSignal, attempts = 3): Promise<RawRow[]> {
+async function withRetry(conn: Connection, start: number, end: number, signal?: AbortSignal, attempts = 3): Promise<RawRow[]> {
   for (let i = 1; ; i++) {
     try {
-      return await requestWindow(key, start, end, signal)
+      return await requestWindow(conn, start, end, signal)
     } catch (err) {
       if (err instanceof WindowTooLarge || err instanceof AuthError) throw err
       if (signal?.aborted || i >= attempts) throw err
@@ -121,11 +123,17 @@ export interface Progress {
 }
 
 /** Probe for the row count without transferring rows. Doubles as key validation. */
-export async function probe(key: string, from: number, to: number): Promise<number> {
+export async function probe(conn: Connection, from: number, to: number): Promise<number> {
   const res = await fetch(`${BASE}?startTime=${from}&endTime=${to}&limit=1&offset=0`, {
-    headers: { 'x-api-key': key, accept: 'application/json' },
+    headers: airiaHeaders(conn),
   }).catch(() => { throw new Error('Could not reach the API through this origin. Is the proxy running?') })
-  if (res.status === 401 || res.status === 403) throw new AuthError(`The key was rejected (HTTP ${res.status}).`)
+  if (res.status === 401 || res.status === 403) throw new AuthError(`The key was rejected by ${conn.host} (HTTP ${res.status}).`)
+  // The proxy answers 400 itself for a host it will not forward to, and
+  // says why; 502 when the host could not be reached at all.
+  if (res.status === 400 || res.status === 502) {
+    const why = await res.json().then((b) => b?.error, () => null)
+    throw new AuthError(typeof why === 'string' ? why : `Could not reach ${conn.host} (HTTP ${res.status}).`)
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()).totalCount ?? 0
 }
@@ -145,7 +153,7 @@ export interface FetchOptions {
 }
 
 export async function fetchAll(
-  key: string,
+  conn: Connection,
   from: number,
   to: number,
   { onProgress, signal, concurrency = CONCURRENCY, chunkMs = CHUNK_MS }: FetchOptions = {},
@@ -178,7 +186,7 @@ export async function fetchAll(
   /** Fetch a window, bisecting recursively if the server cannot serve it whole. */
   const fetchWindow = async (start: number, end: number): Promise<RawRow[]> => {
     try {
-      return await withRetry(key, start, end, signal)
+      return await withRetry(conn, start, end, signal)
     } catch (err) {
       if (!(err instanceof WindowTooLarge)) throw err
       if (end - start <= MIN_WINDOW_MS) {

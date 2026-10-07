@@ -17,7 +17,8 @@ import {
 } from './data/airia'
 import { gatewayLabel, gatewayTitle, hasGatewayNames } from './lib/airia/gateways'
 import { NO_GATEWAY, grainOptions } from './lib/airia/aggregate'
-import { useApiKey, maskKey } from './lib/apiKey'
+import { useApiKey, maskKey, lastHost } from './lib/apiKey'
+import { envName } from './lib/airia/endpoint'
 import { useTheme } from './lib/theme'
 import { Moon, Sun, X } from './components/primitives/icons'
 
@@ -93,22 +94,22 @@ export default function App() {
   /* Only a grain that differs from the default costs a re-fold. */
   const grainFold: GrainPick | null = grain === native ? null : { window: custom ? 'custom' : range, bucketMs: grain }
 
-  const { key, setKey, clear, remember } = useApiKey()
+  const { key, host, conn, setKey, clear, remember } = useApiKey()
   /* One step back is the likeliest next click; the first load reaches that
      far so it is already cached. A drawn range steps by its own span and is
      never what the page opens on, so it passes nothing. */
   const stepBack = custom ? null : stepWindow(range, anchor, -1)
-  const load = useAiriaLive(key, anchor, custom, grainFold, stepBack, reportOpened ? week : null)
+  const load = useAiriaLive(conn, anchor, custom, grainFold, stepBack, reportOpened ? week : null)
   /* The last good fold, HELD while the next one loads. Reading it only when
      the status is 'ready' is what used to drop the page back to the key gate
      mid-session, the moment an anchor reached past the cached rows. */
   const data = load.data
   const busy = load.status === 'loading'
   const allUsers = useAllUsers(data)
-  const gwNames = useGatewayNames(key)
+  const gwNames = useGatewayNames(conn)
   /* Whose data this is. Every tenant's page is otherwise identical, so the
      header, the tab and the report all name it. */
-  const tenant = useTenantName(key)
+  const tenant = useTenantName(conn)
   useEffect(() => {
     document.title = tenant ? `${tenant} · Gateway usage` : 'Gateway usage'
   }, [tenant])
@@ -326,6 +327,7 @@ export default function App() {
         <>
           {key ? (
             <span className="viz-keychip">
+              <span title={host}>{envName(host)}</span>
               <code>{maskKey(key)}</code>
               {remember ? null : <span title="Held in memory only">· this tab</span>}
               <button type="button" onClick={clear}>Change key</button>
@@ -385,7 +387,8 @@ export default function App() {
       <div className="page">
         <Head />
         <KeyGate
-          onSubmit={(k, persist) => setKey(k, persist)}
+          onSubmit={(k, persist, h) => setKey(k, persist, h)}
+          initialHost={key ? host : lastHost()}
           busy={progress}
           error={load.status === 'error' ? load.message ?? null : null}
         />

@@ -19,11 +19,11 @@ import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { proxyAiria } from './proxy.mjs'
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const DIST = join(ROOT, 'dist')
 const PORT = Number(process.env.PORT ?? 4173)
-const UPSTREAM = process.env.AIRIA_UPSTREAM ?? 'https://prodaus.api.airia.ai'
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -34,31 +34,6 @@ const TYPES = {
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
   '.png': 'image/png',
-}
-
-/** Only the header the API needs is forwarded; nothing else is passed on, and
- *  the key is never logged. */
-function forwardHeaders(req) {
-  const out = { accept: 'application/json' }
-  const key = req.headers['x-api-key']
-  if (typeof key === 'string' && key !== '') out['x-api-key'] = key
-  return out
-}
-
-async function proxy(req, res) {
-  const target = UPSTREAM + req.url.replace(/^\/airia/, '')
-  try {
-    const upstream = await fetch(target, { method: 'GET', headers: forwardHeaders(req) })
-    const body = Buffer.from(await upstream.arrayBuffer())
-    res.writeHead(upstream.status, {
-      'content-type': upstream.headers.get('content-type') ?? 'application/json',
-      'cache-control': 'no-store',
-    })
-    res.end(body)
-  } catch (err) {
-    res.writeHead(502, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ error: `Upstream request failed: ${err.message}` }))
-  }
 }
 
 async function serveStatic(req, res) {
@@ -84,11 +59,11 @@ async function serveStatic(req, res) {
 
 createServer((req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return }
-  if (req.url.startsWith('/airia/')) return proxy(req, res)
+  if (req.url.startsWith('/airia/')) return proxyAiria(req, res)
   return serveStatic(req, res)
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`Gateway usage dashboard → http://localhost:${PORT}`)
-  console.log(`  proxying /airia → ${UPSTREAM}`)
+  console.log('  proxying /airia → the Airia environment chosen on the key page')
   console.log('  bound to 127.0.0.1 only: this forwards whatever key the page sends,')
   console.log('  so it is a local tool, not something to host for others.')
 })

@@ -30,8 +30,14 @@ For the built app: `npm run build && npm start` (http://localhost:4173).
 
 The Airia API sends no CORS headers, so a browser can't call it directly
 however valid your key. The page calls `/airia/…` on its **own** origin and
-something local forwards it — Vite's proxy in dev, `server.mjs` for the
-build.
+something local forwards it — `proxy.mjs`, run by Vite in dev and by
+`server.mjs` for the build.
+
+Pick the environment on the key page: `prodaus` by default, or a cloud-prem
+address such as `https://example.airia.ai` (its API host,
+`example.api.airia.ai`, is worked out for you). The proxy forwards to any
+`*.airia.ai` host; set `AIRIA_EXTRA_HOSTS=api.example.com` to allow one on
+another domain.
 
 Nothing is stored. Rows are fetched into the tab, aggregated in the browser
 and dropped when you close it; the key lives in memory unless you opt into
@@ -49,6 +55,7 @@ src/components/ the chart kit
 src/data/       folds the fact table into series and breakdowns
 src/App.tsx     the dashboard
 server.mjs      serves the build and proxies /airia
+proxy.mjs       the /airia proxy, shared by Vite and server.mjs
 ```
 
 Each time range is **one sparse fact table** keyed by (bucket, user, model,
